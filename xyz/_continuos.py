@@ -1,10 +1,11 @@
 from typing import Optional
 import numpy as np
 from .base import InfoTheoryMixin, InfoTheoryEstimator
-from .utils import cov
+from .utils import cov as covariance
+from abc import ABC
 
 
-class MVNInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator):
+class MVInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
     """
     Base class for information theory estimators based on multivariate normal assumption.
     Implements these measures
@@ -18,16 +19,8 @@ class MVNInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator):
         self.cov = cov
         self.mu = mean
 
-    def fit(self, X, y=None):
-        raise NotImplementedError("Abstract base class")
-        pass
 
-    def score(self, X, y=None):
-        raise NotImplementedError("Abstract base class")
-        pass
-
-
-class MVNEntropy(MVNInfoTheoryEstimator):
+class MVNEntropy(MVInfoTheoryEstimator):
     """
     Computes the differential entropy of a given multivariate set of observations
     assuming that the probability distribution function for these observations is Gaussian
@@ -36,7 +29,7 @@ class MVNEntropy(MVNInfoTheoryEstimator):
 
     def fit(self, X, y=None):
         if self.cov is None:
-            self.cov = cov(X)
+            self.cov = covariance(X)
         return self
 
     def score(self, X, y=None):
@@ -49,7 +42,7 @@ class MVNEntropy(MVNInfoTheoryEstimator):
         return e
 
 
-class MVLNEntropy(MVNInfoTheoryEstimator):
+class MVLNEntropy(MVInfoTheoryEstimator):
     """
     Computes the differential entropy of a given multivariate set of observations
     assuming that the probability distribution function for these observations is LogNormal
@@ -59,7 +52,7 @@ class MVLNEntropy(MVNInfoTheoryEstimator):
 
     def fit(self, X, y=None):
         if self.cov is None:
-            self.cov = cov(X)
+            self.cov = covariance(X)
         if self.mu is None:
             self.mu = X.mean(axis=1)
 
@@ -69,7 +62,7 @@ class MVLNEntropy(MVNInfoTheoryEstimator):
         return MVLNEntropy(cov=self.cov).fit(X).score(X, y) + self.mu.sum()
 
 
-class MVParetoEntropy(MVNInfoTheoryEstimator):
+class MVParetoEntropy(MVInfoTheoryEstimator):
     def fit(self, X, y=None):
         pass
 
@@ -79,7 +72,7 @@ class MVParetoEntropy(MVNInfoTheoryEstimator):
         pass
 
 
-class MVExponentialEntropy(MVNInfoTheoryEstimator):
+class MVExponentialEntropy(MVInfoTheoryEstimator):
     def fit(self, X, y=None):
         pass
 
@@ -89,7 +82,7 @@ class MVExponentialEntropy(MVNInfoTheoryEstimator):
         pass
 
 
-class MVNCondEntropy(MVNInfoTheoryEstimator):
+class MVCondEntropy(MVInfoTheoryEstimator):
     def __init__(
         self,
         partial_cov: Optional[np.ndarray] = None,
@@ -128,7 +121,7 @@ class MVNCondEntropy(MVNInfoTheoryEstimator):
         # computes the residuals epsilon
         epsilon = y - X @ alpha
 
-        self.partial_cov = cov(epsilon)
+        self.partial_cov = covariance(epsilon)
         return self
 
     def score(self, X, y=None):
@@ -137,14 +130,16 @@ class MVNCondEntropy(MVNInfoTheoryEstimator):
         return 0.5 * (sign * log_det_part_cov + n_dims * np.log(2 * np.pi * np.exp(1)))
 
 
-class MVNMutualInformation(MVNCondEntropy):
-    def __init__(self):
+class MVNMutualInformation(MVCondEntropy):
+    def __init__(
+        self,
+    ):
         self.hy = None
         self.chxy = None
 
     def fit(self, X, y):
         self.hy = MVNEntropy().fit(X=y).score(X)
-        self.chxy = MVNCondEntropy().fit(X, y).score(X, y)
+        self.chxy = MVCondEntropy().fit(X, y).score(X, y)
         return self
 
     def score(self, X, y=None):
