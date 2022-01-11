@@ -1,6 +1,7 @@
 from typing import Optional
 import numpy as np
 from .base import InfoTheoryMixin, InfoTheoryEstimator
+from .utils import cov
 
 
 class MVNInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator):
@@ -35,7 +36,7 @@ class MVNEntropy(MVNInfoTheoryEstimator):
 
     def fit(self, X, y=None):
         if self.cov is None:
-            self.cov = np.cov(X, rowvar=False)
+            self.cov = cov(X)
         return self
 
     def score(self, X, y=None):
@@ -58,14 +59,14 @@ class MVLNEntropy(MVNInfoTheoryEstimator):
 
     def fit(self, X, y=None):
         if self.cov is None:
-            self.cov = np.cov(X, rowvar=False)
+            self.cov = cov(X)
         if self.mu is None:
             self.mu = X.mean(axis=1)
 
         return self
 
     def score(self, X, y=None):
-        return MVLNEntropy(cov=self.cov, mu=self.mu).fit(X).score(X, y) + self.mu.sum()
+        return MVLNEntropy(cov=self.cov).fit(X).score(X, y) + self.mu.sum()
 
 
 class MVParetoEntropy(MVNInfoTheoryEstimator):
@@ -75,7 +76,7 @@ class MVParetoEntropy(MVNInfoTheoryEstimator):
     def score(self, X, y=None):
         # TODO equation 1.4 "Entropy Expressions and Their Estimators for Multivariate Distributions", Ahmed and Gokhale 1989
         raise NotImplementedError("To be implemented")
-        return
+        pass
 
 
 class MVExponentialEntropy(MVNInfoTheoryEstimator):
@@ -85,7 +86,7 @@ class MVExponentialEntropy(MVNInfoTheoryEstimator):
     def score(self, X, y=None):
         # TODO equation 1.5 "Entropy Expressions and Their Estimators for Multivariate Distributions", Ahmed and Gokhale 1989
         raise NotImplementedError("To be implemented")
-        return
+        pass
 
 
 class MVNCondEntropy(MVNInfoTheoryEstimator):
@@ -97,6 +98,7 @@ class MVNCondEntropy(MVNInfoTheoryEstimator):
         cov_y: Optional[np.ndarray] = None,
     ):
         """
+        Conditional entropy H(Y;X) = H(X,Y) - H(X)
         See Barnett PRL 2009, Eq.1
         Parameters
         ----------
@@ -111,11 +113,11 @@ class MVNCondEntropy(MVNInfoTheoryEstimator):
 
     def fit(self, X, y):
         # if self.cov_x is None:
-        #     self.cov_x = np.cov(X, rowvar=False)
+        #     self.cov_x = cov(X)
         # if self.cov_y is None:
-        #     self.cov_y = np.cov(y, rowvar=False)
+        #     self.cov_y = cov(y)
         # if self.cov_xy is None:
-        #     self.cov_xy = np.cov(X, y, rowvar=False)
+        #     self.cov_xy = cov(X,y)????
 
         # TODO sistemare questo calcolo dove si fornisce la matrice di cross-covarianza nxm dove n è la
         #  dimensione di X e m  la dimensione di y (nel esempio matlab m=1)
@@ -123,14 +125,27 @@ class MVNCondEntropy(MVNInfoTheoryEstimator):
         #     np.linalg.multi_dot(self.cov_xy, np.linalg.inv(self.cov_y), self.cov_xy.T)
         # )
         alpha = np.linalg.lstsq(X, y)[0]
-        res = y - X @ alpha
+        # computes the residuals epsilon
+        epsilon = y - X @ alpha
 
-        self.partial_cov = np.cov(res, rowvar=False)
-        if self.partial_cov.ndim < 2:
-            self.partial_cov = self.partial_cov.reshape(-1, 1)
+        self.partial_cov = cov(epsilon)
         return self
 
     def score(self, X, y=None):
         sign, log_det_part_cov = np.linalg.slogdet(self.partial_cov)
         n_dims = self.partial_cov.shape[0]
         return 0.5 * (sign * log_det_part_cov + n_dims * np.log(2 * np.pi * np.exp(1)))
+
+
+class MVNMutualInformation(MVNCondEntropy):
+    def __init__(self):
+        self.hy = None
+        self.chxy = None
+
+    def fit(self, X, y):
+        self.hy = MVNEntropy().fit(X=y).score(X)
+        self.chxy = MVNCondEntropy().fit(X, y).score(X, y)
+        return self
+
+    def score(self, X, y=None):
+        return self.hy - self.chxy

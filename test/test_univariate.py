@@ -31,3 +31,9 @@ def test_condentropy_mvn():
     assert np.allclose(
         MVNCondEntropy().fit(X, y).score(X, y), correct_result, rtol=1e-3
     )
+
+
+def test_mi_mvn():
+    X = A[:, 1:]
+    y = A[:, 0].reshape(-1, 1)
+    MVNMutualInformation().fit(X, y).score(X, y)
