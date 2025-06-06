@@ -1,8 +1,10 @@
-from typing import Optional, Iterable, Any
-import numpy as np
-from .base import InfoTheoryMixin, InfoTheoryEstimator
-from .utils import cov as covariance
 from abc import ABC
+from typing import Any, Iterable, Optional
+
+import numpy as np
+
+from .base import InfoTheoryEstimator, InfoTheoryMixin
+from .utils import cov as covariance
 
 
 class DiscreteInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):

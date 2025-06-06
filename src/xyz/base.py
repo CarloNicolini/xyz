@@ -1,5 +1,6 @@
-from sklearn.base import BaseEstimator
 from abc import ABC, abstractmethod
+
+from sklearn.base import BaseEstimator
 
 
 class InfoTheoryEstimator(BaseEstimator, ABC):
