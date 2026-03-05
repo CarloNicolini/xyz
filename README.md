@@ -4,9 +4,7 @@
 
 ![xyz logo](docs/logo.png)
 
-# xyz
-
-**Information-theoretic estimators for continuous and time-series data.**
+# `XYZ`: **Information-theoretic estimators for continuous and time-series data.**
 
 Understanding how different parts of a system share information, and in which direction influence flows, is a central question in the analysis of complex systems—from neural and physiological networks to financial markets and climate data. Information theory provides a principled, model-free language for this: entropy quantifies unpredictability or “how much is going on” in a process; mutual information measures shared information between variables; and transfer entropy captures the directed flow of information from one time series to another, conditioning out the past of the target. These quantities are especially useful when relationships are nonlinear or high-dimensional, where simple correlation or regression can miss important structure.
 
