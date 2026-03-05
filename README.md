@@ -14,6 +14,7 @@
 - **Transfer entropy**: Bivariate and partial transfer entropy via KSG, kernel, Gaussian (linear), and **discrete (binning-based)** methods.
 - **Self-entropy (information storage)**: Kernel, Gaussian, and discrete (binning-based) estimators.
 - **Partial information decomposition (PID)**: Decomposition of information from two sources about a target (unique, redundant, synergistic).
+- **TRENTOOL-style workflow**: Embedding and delay search (`RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`), surrogate-based significance testing (`SurrogatePermutationTest`, `generate_surrogates`), and group/ensemble helpers (`GroupTEAnalysis`, `EnsembleTransferEntropy`).
 
 All estimators support multivariate inputs and return values in **nats** unless noted. Time-series estimators use delay embedding helpers from `xyz.preprocessing`; discrete TE/PTE/SE are available directly from the public `xyz` namespace.
 
@@ -141,6 +142,36 @@ best_delay = search.best_delay_
 best_te = search.best_score_
 ```
 
+### TRENTOOL-style workflow (embedding, delay, significance)
+
+Choose embedding dimension and spacing (Ragwitz), interaction delay, and test against surrogates:
+
+```python
+from xyz import (
+    GaussianTransferEntropy,
+    InteractionDelaySearchCV,
+    RagwitzEmbeddingSearchCV,
+    SurrogatePermutationTest,
+)
+
+base = GaussianTransferEntropy(driver_indices=[1], target_indices=[0], lags=1)
+
+# Embedding search (Ragwitz prediction error)
+embedding = RagwitzEmbeddingSearchCV(base, target_index=0, dimensions=(1, 2, 3), taus=(1, 2, 3))
+embedding.fit(data)
+
+# Delay search
+delay = InteractionDelaySearchCV(base.set_params(**embedding.best_params_), delays=(1, 2, 3, 4, 5))
+delay.fit(data)
+
+# Surrogate permutation test
+test = SurrogatePermutationTest(delay.best_estimator_, n_permutations=100)
+test.fit(data)
+# test.p_value_, test.reject_  (with optional FDR correction)
+```
+
+See the [model selection workflow](docs/source/examples/model_selection_workflow.rst) in the docs for a full example.
+
 ---
 
 ## ITS Toolbox (v2.1) numerical alignment
@@ -182,39 +213,23 @@ To match ITS `range_search(..., past=0)` behavior, KSG count stages in `xyz` exc
 
 ## Building ITS neighbor-search MEX files with Octave
 
-If you have the TSTOOL source folders (`NN`, `NNSearcher`, `mextools`), compile the three ITS dependency MEX files as follows:
+The project includes a **Makefile** at the repo root that builds the three TSTOOL MEX files (`nn_prepare`, `nn_search`, `range_search`) for the current architecture (Linux and macOS). You need Octave and `mkoctfile` (e.g. `liboctave-dev` on Debian/Ubuntu, or `brew install octave` on macOS).
+
+From the project root:
 
 ```bash
-cd matlab/mex
-
-mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
-  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/nn_prepare.cpp \
-  -o nn_prepare
-
-mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
-  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/nn_search.cpp \
-  -o nn_search
-
-mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
-  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/range_search.cpp \
-  -o range_search
+make mex
 ```
 
-Why these flags:
+This compiles the sources under `matlab/mex/tstool` with the flags required for ITS parity (including `-DMATLAB_MEX_FILE` and C++17 compatibility). To also build the Sphinx docs: `make docs`. To remove MEX artifacts and docs build: `make clean`. Run `make help` for a short summary.
 
-- `-DMATLAB_MEX_FILE`: forces use of `mex.h` path in `mextools` (otherwise it falls back to `mex2main.h` standalone code).
-- `-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION`: compatibility with modern libc++ where legacy `binary_function` is removed by default.
-
-Verify in Octave:
+To verify in Octave (from project root):
 
 ```bash
-octave-cli --eval "addpath('matlab'); which nn_prepare; which nn_search; which range_search"
+octave-cli --eval "addpath('matlab'); addpath('matlab/its'); addpath('matlab/mex'); which nn_prepare; which nn_search; which range_search"
 ```
 
-Expected: all three resolve to `.mex` files in `matlab`.
+Expected: all three resolve to `.mex` files in `matlab/mex`.
 
 ---
 
@@ -233,6 +248,14 @@ This alignment step (ITS parity) is the correct foundation before domain adaptat
 
 ---
 
+## Development and CI/CD
+
+- **Makefile** (root): `make mex` builds the ITS MEX files; `make docs` builds Sphinx HTML into `docs/build/html`; `make clean` removes MEX outputs and docs build.
+- **Docker**: From the repo root, `docker build -t xyz-its-test .` builds an image with Octave, compiles the MEX files, and runs the test suite. Run tests with `docker run --rm xyz-its-test` (default command is `pytest tests/ -v`).
+- **GitHub Actions**: CI runs on push and pull requests to `main`/`master`: tests on Ubuntu and macOS (Python 3.12, Octave, MEX build, pytest) and a docs build job. The release workflow publishes the package to PyPI when a GitHub release is published; set the `PYPI_API_TOKEN` repository secret to enable publishing.
+
+---
+
 ## When to use which estimator
 
 | Setting | Suggested estimator | Notes |
@@ -242,6 +265,7 @@ This alignment step (ITS parity) is the correct foundation before domain adaptat
 | Bivariate / partial TE with lagged time series | `KSGTransferEntropy`, `KSGPartialTransferEntropy` | Uses delay embedding (see `buildvectors` in `xyz.utils`). |
 | Nonparametric TE with fixed radius | `KernelTransferEntropy`, `KernelPartialTransferEntropy`, `KernelSelfEntropy` | Radius `r` must be chosen. |
 | Binned or discretized time series | `DiscreteTransferEntropy`, `DiscretePartialTransferEntropy`, `DiscreteSelfEntropy` | Available from `xyz`; set `c` bins or pass pre-quantized data. |
+| TRENTOOL-style: choose embedding, delay, and test significance | `RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`, `SurrogatePermutationTest` | Use with any TE estimator; see model selection workflow in docs. |
 
 KSG and kernel estimators can occasionally yield small negative values due to finite-sample bias; for weak dependencies, Gaussian or significance tests may be more stable.
 
@@ -256,6 +280,7 @@ KSG and kernel estimators can occasionally yield small negative values due to fi
 - **Williams, P. L., & Beer, R. D.** (2010). Nonnegative decomposition of multivariate information. *arXiv:1004.2515*. (Partial information decomposition.)
 - **Faes, L.** (2019). *ITS Toolbox v2.1: A Matlab toolbox for the practical computation of Information Dynamics*. See `docs/ITS_Toolbox_v2.1.pdf`.
 - **TSTOOL** nearest-neighbor engine (`nn_prepare`, `nn_search`, `range_search`) from University of Goettingen, used by ITS KNN estimators.
+- **TRENTOOL**-style workflows: embedding optimization (Ragwitz), interaction delay search, and surrogate permutation testing for significance; see the [model selection workflow](docs/source/examples/model_selection_workflow.rst) in the docs.
 
 For more detail on the multivariate KSG API and use cases, see [MULTIVARIATE_KSG_GUIDE.md](MULTIVARIATE_KSG_GUIDE.md).
 
