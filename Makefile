@@ -4,7 +4,7 @@
 MEX_DIR := matlab/mex
 # Use absolute include paths so headers are found on all platforms (macOS clang resolves -I differently)
 MEX_ABS := $(abspath $(MEX_DIR))
-INC := -I$(MEX_ABS)/tstool -I$(MEX_ABS)/tstool/NN -I$(MEX_ABS)/tstool/mextools
+INC := -I$(MEX_ABS)/tstool -I$(MEX_ABS)/tstool/NN -I$(MEX_ABS)/tstool/NNSearcher -I$(MEX_ABS)/tstool/mextools
 MKOCTFILE ?= mkoctfile
 
 # Same flags for Linux and macOS (README); -D_LIBCPP_... for modern libc++ on macOS.
