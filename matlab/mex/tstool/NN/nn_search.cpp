@@ -14,11 +14,14 @@
 // this files have to be located before(!!!) the #ifdef MATLAB_MEX_FILE sequence,
 // otherwise the defines will break the STL
 #include <vector>
+using std::vector;
 
 #include "mextools/mextools.h"
 
 // this includes the code for the nearest neighbor searcher and the prediction routines
 #include "NNSearcher/point_set.h"
+#include "NNSearcher/metric.h"
+#include "NNSearcher/nearneigh_search.h"
 #include "include.mex"
 
 // Addition by Joseph Young on 6/4/20
