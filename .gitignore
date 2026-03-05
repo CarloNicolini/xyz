@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+.idea/
+
 # Distribution / packaging
 .Python
 build/
@@ -68,9 +70,6 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
-docs/_build/
-
 # PyBuilder
 target/
 
@@ -90,6 +89,7 @@ ipython_config.py
 #   having no cross-platform support, pipenv may install dependencies that don't work, or not
 #   install all needed dependencies.
 #Pipfile.lock
+*.lock
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow
 __pypackages__/
@@ -127,3 +127,25 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Sphinx documentation
+docs/_build/
+docs/auto_examples
+docs/auto_mayavi_examples
+docs/auto_plotly_examples
+docs/auto_pyvista_examples
+docs/tutorials/
+docs/gen_modules/
+docs/generated/
+docs/jupyterlite_contents
+
+# Test builds
+sphinx_gallery/tests/tinybuild/gen_modules/
+sphinx_gallery/tests/tinybuild/auto_examples/
+sphinx_gallery/tests/tinybuild/_build/
+sphinx_gallery/tests/tinybuild/tiny_html/
+junit-results.xml
+
+# Cursor editor workspace
+.cursor/
