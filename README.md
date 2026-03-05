@@ -217,9 +217,11 @@ To match ITS `range_search(..., past=0)` behavior, KSG count stages in `xyz` exc
 
 ## Building ITS neighbor-search MEX files with Octave
 
-The project includes a **Makefile** at the repo root that builds the three TSTOOL MEX files (`nn_prepare`, `nn_search`, `range_search`) for the current architecture (Linux and macOS). You need Octave and `mkoctfile` (e.g. `liboctave-dev` on Debian/Ubuntu, or `brew install octave` on macOS).
+The project includes a **Makefile** at the repo root that builds the three TSTOOL MEX files (`nn_prepare`, `nn_search`, `range_search`) for the current architecture (Linux and macOS). You need Octave and `mkoctfile` (e.g. `octave-dev` on Ubuntu, or `brew install octave` on macOS).
 
-From the project root:
+**Prebuilt MEX (no Octave required):** For each release, GitHub Actions builds MEX files on Linux (x86_64, aarch64) and macOS (x86_64, arm64) and attaches them to the [Releases](https://github.com/CarloNicolini/xyz/releases) page as `xyz-mex-<platform>-<arch>.zip`. Download the zip for your OS/architecture, unzip into `matlab/mex/`, and add `matlab`, `matlab/its`, and `matlab/mex` to your Octave/MATLAB path.
+
+From the project root (to build from source):
 
 ```bash
 make mex

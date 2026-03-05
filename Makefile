@@ -2,8 +2,9 @@
 # Supports Linux and macOS; run from project root. Requires: octave, mkoctfile (liboctave-dev).
 
 MEX_DIR := matlab/mex
-# Include paths relative to MEX_DIR (we cd there before mkoctfile)
-INC := -Itstool -Itstool/NN -Itstool/mextools
+# Use absolute include paths so headers are found on all platforms (macOS clang resolves -I differently)
+MEX_ABS := $(abspath $(MEX_DIR))
+INC := -I$(MEX_ABS)/tstool -I$(MEX_ABS)/tstool/NN -I$(MEX_ABS)/tstool/mextools
 MKOCTFILE ?= mkoctfile
 
 # Same flags for Linux and macOS (README); -D_LIBCPP_... for modern libc++ on macOS.
