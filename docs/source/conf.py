@@ -45,6 +45,7 @@ intersphinx_mapping = {
 
 html_theme = "pydata_sphinx_theme"
 html_title = "xyz documentation"
+html_logo = "../logo.png"
 html_static_path = ["_static"]
 html_theme_options = {
     "navigation_with_keys": True,

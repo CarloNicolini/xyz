@@ -1,5 +1,7 @@
 [![CI](https://github.com/CarloNicolini/xyz/actions/workflows/ci.yml/badge.svg)](https://github.com/CarloNicolini/xyz/actions/workflows/ci.yml)
 
+![xyz logo](docs/logo.png)
+
 # xyz
 
 **Information-theoretic estimators for continuous and time-series data.**

@@ -1,6 +1,11 @@
 xyz documentation
 =================
 
+.. image:: ../logo.png
+   :alt: xyz logo
+   :align: center
+   :width: 200px
+
 Information-theoretic estimators for continuous and time-series data.
 
 The library provides entropy, mutual information, transfer entropy, and related estimators
