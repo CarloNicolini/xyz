@@ -13,10 +13,11 @@ MEX_FLAGS := --mex -DMATLAB_MEX_FILE -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY
 SOURCES := $(MEX_DIR)/tstool/NN/nn_prepare.cpp $(MEX_DIR)/tstool/NN/nn_search.cpp $(MEX_DIR)/tstool/NN/range_search.cpp
 
 .PHONY: mex docs clean help
+# Run from project root so compiler resolves #include "include.mex" relative to source dir on all platforms
 mex: $(SOURCES)
-	cd $(MEX_DIR) && $(MKOCTFILE) $(MEX_FLAGS) $(INC) tstool/NN/nn_prepare.cpp -o nn_prepare
-	cd $(MEX_DIR) && $(MKOCTFILE) $(MEX_FLAGS) $(INC) tstool/NN/nn_search.cpp -o nn_search
-	cd $(MEX_DIR) && $(MKOCTFILE) $(MEX_FLAGS) $(INC) tstool/NN/range_search.cpp -o range_search
+	$(MKOCTFILE) $(MEX_FLAGS) $(INC) $(MEX_DIR)/tstool/NN/nn_prepare.cpp -o $(MEX_DIR)/nn_prepare
+	$(MKOCTFILE) $(MEX_FLAGS) $(INC) $(MEX_DIR)/tstool/NN/nn_search.cpp -o $(MEX_DIR)/nn_search
+	$(MKOCTFILE) $(MEX_FLAGS) $(INC) $(MEX_DIR)/tstool/NN/range_search.cpp -o $(MEX_DIR)/range_search
 
 docs:
 	cd docs && $(MAKE) html
