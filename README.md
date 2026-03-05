@@ -1,3 +1,5 @@
+[![CI](https://github.com/CarloNicolini/xyz/actions/workflows/ci.yml/badge.svg)](https://github.com/CarloNicolini/xyz/actions/workflows/ci.yml)
+
 # xyz
 
 **Information-theoretic estimators for continuous and time-series data.**
@@ -245,6 +247,41 @@ The ITS framework was developed for physiological networks, but the estimators a
 - `SE(Y)`: information storage (predictability from own past), relevant for regime persistence and serial dependence diagnostics.
 
 This alignment step (ITS parity) is the correct foundation before domain adaptation, model selection, significance testing, and robustness analysis on nonstationary financial data.
+
+### Hedge-fund research framing
+
+For discretionary or systematic research, `xyz` is best viewed as a toolkit for measuring predictive information rather than just linear correlation:
+
+- **Signal orthogonality**: test whether a candidate signal still carries information about future returns after conditioning on benchmark factors, volatility, or sector moves via `MVKSGCondMutualInformation` or partial transfer entropy.
+- **Lead-lag discovery**: quantify whether macro series, futures, options-implied variables, or cross-asset returns contain incremental information about a target book or sleeve at specific delays.
+- **Regime persistence**: use self-entropy to detect whether a return, spread, or volatility process is mostly explained by its own past, which is useful for persistence and mean-reversion diagnostics.
+- **Feature interaction**: use PID to separate whether two signals are redundant, uniquely informative, or only useful jointly through synergy.
+- **Stress propagation**: build directed TE graphs across sectors, countries, or portfolio sleeves to monitor contagion and concentration of information flow during drawdowns.
+
+A pragmatic workflow is usually:
+
+1. Screen with `GaussianTransferEntropy` / `GaussianPartialTransferEntropy` for fast linear diagnostics and `p_value_`.
+2. Re-test promising relationships with `KSGTransferEntropy` / `KSGPartialTransferEntropy` to relax Gaussian assumptions.
+3. Search embedding and delay with `RagwitzEmbeddingSearchCV` and `InteractionDelaySearchCV`.
+4. Confirm significance with `SurrogatePermutationTest`.
+5. Repeat on rolling windows because financial dependencies are rarely stationary.
+
+### Market microstructure framing
+
+At higher frequency, the same estimators can be used on order-book and trade-derived state variables:
+
+- **Target `Y`**: next mid-price move, short-horizon return, spread change, or realized volatility burst.
+- **Driver `X`**: order-flow imbalance, trade sign, queue depletion, cancellation bursts, depth imbalance, or venue-specific activity.
+- **Conditioning `Z`**: the target's own lagged history, spread regime, volatility state, auction flags, or broad market state variables.
+
+This makes the estimators useful for questions such as:
+
+- whether order-flow imbalance truly leads price moves beyond the target's own autocorrelation;
+- whether one venue leads another in fragmented markets;
+- whether a book feature adds unique information beyond simpler proxies;
+- whether discretized states such as `up/flat/down` or spread buckets are better modeled with the public discrete estimators.
+
+For microstructure work, the discrete estimators (`DiscreteTransferEntropy`, `DiscretePartialTransferEntropy`, `DiscreteSelfEntropy`) are especially handy when the data are naturally bucketed into states or when a researcher wants a robust first-pass state-transition analysis before moving to continuous KSG estimators.
 
 ---
 

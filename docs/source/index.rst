@@ -36,6 +36,11 @@ as interactive Plotly HTML.
        margin=dict(l=40, r=20, t=60, b=40),
    )
 
+The finance examples in this documentation frame ``xyz`` in two practical ways:
+as a hedge-fund research toolkit for testing incremental predictive content, and
+as a market microstructure toolkit for studying directional information flow in
+order-book and trade-derived state variables.
+
 .. toctree::
    :maxdepth: 2
    :caption: Getting started
