@@ -8,7 +8,13 @@
 
 **Information-theoretic estimators for continuous and time-series data.**
 
-`xyz` is a Python library for estimating entropy, mutual information, transfer entropy, and related quantities from empirical data. It provides both parametric (Gaussian) and non-parametric (k-nearest neighbor and kernel) estimators, with a scikit-learn–compatible API.
+Understanding how different parts of a system share information, and in which direction influence flows, is a central question in the analysis of complex systems—from neural and physiological networks to financial markets and climate data. Information theory provides a principled, model-free language for this: entropy quantifies unpredictability or “how much is going on” in a process; mutual information measures shared information between variables; and transfer entropy captures the directed flow of information from one time series to another, conditioning out the past of the target. These quantities are especially useful when relationships are nonlinear or high-dimensional, where simple correlation or regression can miss important structure.
+
+`xyz` implements estimators for these quantities on continuous and time-series data. It offers both parametric (Gaussian) and non-parametric (k-nearest neighbor and kernel) methods. The Gaussian estimators are fast and well-suited to approximately linear, Gaussian settings; the k-NN–based estimators (Kozachenko–Leonenko entropy, Kraskov–Stögbauer–Grassberger mutual information, and derived transfer entropy and self-entropy) are widely used in neuroscience and complex-systems research because they make minimal distributional assumptions and scale to multivariate and delay-embedded time series. The library also supports discrete (binned) estimators and partial information decomposition, so you can separate unique, redundant, and synergistic contributions of multiple sources to a target.
+
+The implementation is validated against the ITS Toolbox workflow: the same nearest-neighbor logic and MEX-backed reference (TSTOOL) used there are reproduced in Python, and numerical parity is checked on fixed datasets. Beyond point estimates, `xyz` supports TRENTOOL-style workflows—embedding and delay selection (e.g. Ragwitz criterion), surrogate-based significance testing, and group or ensemble analyses—so that embedding choice and statistical testing are part of a reproducible pipeline.
+
+`xyz` is a Python library that exposes these estimators through a scikit-learn–compatible API: fit/score, optional model selection, and clear separation between data preparation and estimation. It is aimed at researchers and practitioners who need rigorous, comparable information-theoretic analyses on real-world time series without leaving the Python ecosystem.
 
 ---
 
