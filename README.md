@@ -15,7 +15,7 @@
 - **Self-entropy (information storage)**: Kernel, Gaussian, and discrete (binning-based) estimators.
 - **Partial information decomposition (PID)**: Decomposition of information from two sources about a target (unique, redundant, synergistic).
 
-All estimators support multivariate inputs and return values in **nats** unless noted. Time-series estimators use delay embedding via `xyz.utils.buildvectors`; discrete TE/PTE/SE live in `xyz._discrete`.
+All estimators support multivariate inputs and return values in **nats** unless noted. Time-series estimators use delay embedding helpers from `xyz.preprocessing`; discrete TE/PTE/SE are available directly from the public `xyz` namespace.
 
 ---
 
@@ -54,7 +54,7 @@ mi = mi_estimator.score(x, y)  # nats
 Bivariate transfer entropy with lagged embeddings (driver → target):
 
 ```python
-from xyz._continuos import KSGTransferEntropy
+from xyz import KSGTransferEntropy
 
 # data: (n_samples, n_variables), e.g. (1000, 3)
 data = np.random.randn(1000, 3)
@@ -62,6 +62,8 @@ te_estimator = KSGTransferEntropy(
     driver_indices=[0],
     target_indices=[1],
     lags=1,
+    tau=1,
+    delay=1,
     k=3,
 )
 te_estimator.fit(data)
@@ -71,7 +73,7 @@ te = te_estimator.transfer_entropy_  # TE(driver 0 → target 1)
 ### Gaussian (linear) transfer entropy with F-test
 
 ```python
-from xyz._continuos import GaussianTransferEntropy
+from xyz import GaussianTransferEntropy
 
 te_lin = GaussianTransferEntropy(
     driver_indices=[0],
@@ -107,10 +109,10 @@ result = pid.score(X1, X2, y)
 
 ### Discrete (binning-based) transfer entropy
 
-For binned or discretized time series, use estimators in `xyz._discrete`:
+For binned or discretized time series, use the public discrete estimators:
 
 ```python
-from xyz._discrete import DiscreteTransferEntropy
+from xyz import DiscreteTransferEntropy
 
 # Quantize continuous data into c bins (or pass already discrete indices)
 te_disc = DiscreteTransferEntropy(
@@ -122,6 +124,21 @@ te_disc = DiscreteTransferEntropy(
 )
 te_disc.fit(data)
 te = te_disc.transfer_entropy_
+```
+
+### sklearn-style model selection
+
+```python
+from xyz import GaussianTransferEntropy, InteractionDelaySearchCV
+
+search = InteractionDelaySearchCV(
+    GaussianTransferEntropy(driver_indices=[0], target_indices=[1], lags=1),
+    delays=[1, 2, 3, 4],
+)
+search.fit(data)
+
+best_delay = search.best_delay_
+best_te = search.best_score_
 ```
 
 ---
@@ -168,22 +185,22 @@ To match ITS `range_search(..., past=0)` behavior, KSG count stages in `xyz` exc
 If you have the TSTOOL source folders (`NN`, `NNSearcher`, `mextools`), compile the three ITS dependency MEX files as follows:
 
 ```bash
-cd /Users/carlo/workspace/MIF-Toolbox/tstool_files/NN
+cd matlab/mex
 
 mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION \
-  -I.. -I../.. nn_prepare.cpp \
-  -o /Users/carlo/workspace/xyz/matlab/nn_prepare
+  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
+  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/nn_prepare.cpp \
+  -o nn_prepare
 
 mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION \
-  -I.. -I../.. nn_search.cpp \
-  -o /Users/carlo/workspace/xyz/matlab/nn_search
+  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
+  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/nn_search.cpp \
+  -o nn_search
 
 mkoctfile --mex -DMATLAB_MEX_FILE \
-  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION \
-  -I.. -I../.. range_search.cpp \
-  -o /Users/carlo/workspace/xyz/matlab/range_search
+  -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -O3 \
+  -Itstool -Itstool/NN -Itstool/mextools tstool/NN/range_search.cpp \
+  -o range_search
 ```
 
 Why these flags:
@@ -224,7 +241,7 @@ This alignment step (ITS parity) is the correct foundation before domain adaptat
 | General continuous data, no Gaussian assumption | `KSGEntropy`, `KSGMutualInformation`, `KSGTransferEntropy` | k-NN based; robust, widely used. |
 | Bivariate / partial TE with lagged time series | `KSGTransferEntropy`, `KSGPartialTransferEntropy` | Uses delay embedding (see `buildvectors` in `xyz.utils`). |
 | Nonparametric TE with fixed radius | `KernelTransferEntropy`, `KernelPartialTransferEntropy`, `KernelSelfEntropy` | Radius `r` must be chosen. |
-| Binned or discretized time series | `DiscreteTransferEntropy`, `DiscretePartialTransferEntropy`, `DiscreteSelfEntropy` | In `xyz._discrete`; set `c` bins or pass pre-quantized data. |
+| Binned or discretized time series | `DiscreteTransferEntropy`, `DiscretePartialTransferEntropy`, `DiscreteSelfEntropy` | Available from `xyz`; set `c` bins or pass pre-quantized data. |
 
 KSG and kernel estimators can occasionally yield small negative values due to finite-sample bias; for weak dependencies, Gaussian or significance tests may be more stable.
 

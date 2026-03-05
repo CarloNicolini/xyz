@@ -1,6 +1,14 @@
 Modules
 =======
 
+``xyz._continuous``
+-------------------
+
+.. automodule:: xyz._continuous
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 ``xyz._continuos``
 ------------------
 
@@ -8,7 +16,6 @@ Modules
    :members:
    :undoc-members:
    :show-inheritance:
-   :exclude-members: KSGEntropy, KSGMutualInformation, MVKSGCondEntropy, MVKSGTransferEntropy, MVKSGPartialInformationDecomposition
 
 ``xyz._discrete``
 -----------------
@@ -38,6 +45,30 @@ Modules
 ------------
 
 .. automodule:: xyz.base
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+``xyz.preprocessing``
+---------------------
+
+.. automodule:: xyz.preprocessing
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+``xyz.model_selection``
+-----------------------
+
+.. automodule:: xyz.model_selection
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+``xyz.stats``
+-------------
+
+.. automodule:: xyz.stats
    :members:
    :undoc-members:
    :show-inheritance:

@@ -1,217 +1,206 @@
+from __future__ import annotations
+
 from abc import ABC
 
 import numpy as np
 
 from .base import InfoTheoryEstimator, InfoTheoryMixin
-from .utils import buildvectors
+from .preprocessing import build_te_observations
 
 
 class DiscreteInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
-    """Base class for discrete estimators.
-
-    Parameters
-    ----------
-    alphabet : array-like, optional
-        Optional explicit alphabet for discrete states. Current implementations
-        infer states from data when this is not provided.
-    """
-
-    def __init__(self, alphabet=None):
-        self.alphabet = alphabet
+    """Base class for discrete estimators."""
 
 
 def _quantize_matlab(y: np.ndarray, c: int) -> np.ndarray:
-    """Quantize a 1D signal using MATLAB-compatible uniform bins.
-
-    The implementation mirrors the ITS toolbox quantization convention:
-    integer labels in ``{1, ..., c}``, with saturation at the highest level.
-    """
+    """Quantize a 1D signal using MATLAB-compatible uniform bins."""
     y = np.asarray(y).reshape(-1)
-    n = y.shape[0]
-    x = np.zeros(n, dtype=int)
-    ma = np.max(y)
-    mi = np.min(y)
     if c <= 0:
         raise ValueError("c must be > 0")
+    ma = np.max(y)
+    mi = np.min(y)
     q = (ma - mi) / c
     if q == 0:
-        return np.ones(n, dtype=int)
+        return np.ones_like(y, dtype=int)
     levels = np.array([mi + (i + 1) * q for i in range(c)])
-    for i in range(n):
+    x = np.zeros_like(y, dtype=int)
+    for i, value in enumerate(y):
         j = 0
-        while j < c - 1 and y[i] >= levels[j]:
+        while j < c - 1 and value >= levels[j]:
             j += 1
         x[i] = j + 1
     return x
 
 
-def _entropy_binning(Y: np.ndarray, c: int, quantize: bool = True) -> float:
-    """Estimate entropy from empirical frequencies on discretized states.
+def _prepare_discrete_trials(X, *, c: int, quantize: bool) -> np.ndarray:
+    X = np.asarray(X)
+    if X.ndim == 1:
+        X = X.reshape(1, -1, 1)
+    elif X.ndim == 2:
+        X = X[np.newaxis, ...]
+    elif X.ndim != 3:
+        raise ValueError(f"Expected a 1D, 2D or 3D array, got shape {X.shape}")
 
-    Parameters
-    ----------
-    Y : ndarray
-        Samples, shape ``(n_samples, n_features)``.
-    c : int
-        Number of quantization bins if ``quantize=True``.
-    quantize : bool, default=True
-        If True, apply MATLAB-like quantization before counting states.
-    """
+    if not quantize:
+        return X.astype(int, copy=False)
+
+    Xq = np.empty_like(X, dtype=int)
+    for trial_idx in range(X.shape[0]):
+        for feature_idx in range(X.shape[2]):
+            Xq[trial_idx, :, feature_idx] = _quantize_matlab(X[trial_idx, :, feature_idx], c) - 1
+    return Xq
+
+
+def _entropy_binning(Y: np.ndarray) -> float:
     Y = np.asarray(Y)
     if Y.ndim == 1:
         Y = Y.reshape(-1, 1)
-    if quantize:
-        Yq = np.column_stack([_quantize_matlab(Y[:, m], c) - 1 for m in range(Y.shape[1])])
-    else:
-        Yq = Y
-    n = Yq.shape[0]
-    _, counts = np.unique(Yq, axis=0, return_counts=True)
-    p = counts / n
+    _, counts = np.unique(Y, axis=0, return_counts=True)
+    p = counts / counts.sum()
     p = p[p > 0]
     return float(-(p * np.log(p)).sum())
 
 
-def _conditional_entropy_binning(B: np.ndarray) -> float:
-    """Estimate conditional entropy ``H(y|A)`` from an observation matrix.
+def _conditional_entropy_binning(Y: np.ndarray, X: np.ndarray) -> float:
+    Y = np.asarray(Y)
+    X = np.asarray(X)
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    if X.shape[1] == 0:
+        return _entropy_binning(Y)
 
-    The first column of ``B`` is interpreted as the current target ``y`` and
-    remaining columns as conditioning variables ``A``.
-    """
-    B = np.asarray(B)
-    if B.ndim == 1:
-        B = B.reshape(-1, 1)
-    y = B[:, :1]
-    A = B[:, 1:]
-    n = B.shape[0]
-    if A.shape[1] == 0:
-        return _entropy_binning(y, c=1, quantize=False)
-    uniq_A, inv = np.unique(A, axis=0, return_inverse=True)
+    _, inv = np.unique(X, axis=0, return_inverse=True)
     ce = 0.0
-    for g in range(uniq_A.shape[0]):
-        idx = inv == g
-        pg = idx.mean()
-        y_g = y[idx]
-        _, cnt = np.unique(y_g, axis=0, return_counts=True)
-        p = cnt / cnt.sum()
-        h = -(p[p > 0] * np.log(p[p > 0])).sum()
-        ce += pg * h
+    for group_id in range(inv.max() + 1):
+        idx = inv == group_id
+        p_group = idx.mean()
+        ce += p_group * _entropy_binning(Y[idx])
     return float(ce)
 
 
-class DiscreteTransferEntropy(InfoTheoryEstimator):
-    """Discrete bivariate transfer entropy estimator.
+class DiscreteTransferEntropy(DiscreteInfoTheoryEstimator):
+    """Discrete bivariate transfer entropy estimator."""
 
-    This estimator implements:
+    score_attr_ = "transfer_entropy_"
 
-    ``TE(X->Y) = H(Y_n | Y_n^-) - H(Y_n | Y_n^-, X_n^-)``
-
-    where past vectors are built with uniform lags using ``buildvectors``.
-    The implementation is aligned with the ITS binning workflow.
-    """
-
-    def __init__(self, driver_indices, target_indices, lags=1, c=8, quantize=True):
+    def __init__(
+        self,
+        driver_indices,
+        target_indices,
+        lags: int = 1,
+        tau: int = 1,
+        delay: int = 1,
+        c: int = 8,
+        quantize: bool = True,
+        extra_conditioning: str | None = None,
+    ):
         self.driver_indices = driver_indices
         self.target_indices = target_indices
         self.lags = lags
+        self.tau = tau
+        self.delay = delay
         self.c = c
         self.quantize = quantize
+        self.extra_conditioning = extra_conditioning
 
     def fit(self, X, y=None):
-        X = np.asarray(X)
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-        if self.quantize:
-            Xq = np.column_stack([_quantize_matlab(X[:, m], self.c) - 1 for m in range(X.shape[1])])
-        else:
-            Xq = X
-        V = np.array(
-            [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
-            + [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        Xq = _prepare_discrete_trials(X, c=self.c, quantize=self.quantize)
+        parts = build_te_observations(
+            Xq,
+            target_index=self.target_indices[0],
+            lags=self.lags,
+            tau=self.tau,
+            delay=self.delay,
+            driver_index=self.driver_indices[0],
+            extra_conditioning=self.extra_conditioning,
         )
-        B = buildvectors(Xq, self.target_indices[0], V)
-        n_t = self.lags
-        y_present = B[:, :1]
-        y_past = B[:, 1 : 1 + n_t]
-        xy_past = B[:, 1:]
-        hy_y = _conditional_entropy_binning(np.hstack([y_present, y_past])) if y_past.size else _entropy_binning(y_present, self.c, False)
-        hy_xy = _conditional_entropy_binning(np.hstack([y_present, xy_past])) if xy_past.size else hy_y
-        self.transfer_entropy_ = float(hy_y - hy_xy)
-        self.hy_y_ = float(hy_y)
-        self.hy_xy_ = float(hy_xy)
+        restricted = np.hstack([parts["y_past"], parts["faes_current"]])
+        full = np.hstack([parts["y_past"], parts["x_past"], parts["faes_current"]])
+        self.hy_y_ = _conditional_entropy_binning(parts["y_present"], restricted)
+        self.hy_xy_ = _conditional_entropy_binning(parts["y_present"], full)
+        self.transfer_entropy_ = float(self.hy_y_ - self.hy_xy_)
         return self
 
 
-class DiscretePartialTransferEntropy(InfoTheoryEstimator):
-    """Discrete partial transfer entropy estimator.
+class DiscretePartialTransferEntropy(DiscreteInfoTheoryEstimator):
+    """Discrete partial transfer entropy estimator."""
 
-    Implements conditional transfer entropy:
+    score_attr_ = "transfer_entropy_"
 
-    ``PTE(X->Y|Z) = H(Y_n | Y_n^-, Z_n^-) - H(Y_n | Y_n^-, X_n^-, Z_n^-)``.
-    """
-
-    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1, c=8, quantize=True):
+    def __init__(
+        self,
+        driver_indices,
+        target_indices,
+        conditioning_indices,
+        lags: int = 1,
+        tau: int = 1,
+        delay: int = 1,
+        c: int = 8,
+        quantize: bool = True,
+        extra_conditioning: str | None = None,
+    ):
         self.driver_indices = driver_indices
         self.target_indices = target_indices
         self.conditioning_indices = conditioning_indices
         self.lags = lags
+        self.tau = tau
+        self.delay = delay
         self.c = c
         self.quantize = quantize
+        self.extra_conditioning = extra_conditioning
 
     def fit(self, X, y=None):
-        X = np.asarray(X)
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-        if self.quantize:
-            Xq = np.column_stack([_quantize_matlab(X[:, m], self.c) - 1 for m in range(X.shape[1])])
-        else:
-            Xq = X
-        V = np.array(
-            [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
-            + [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
-            + [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        Xq = _prepare_discrete_trials(X, c=self.c, quantize=self.quantize)
+        parts = build_te_observations(
+            Xq,
+            target_index=self.target_indices[0],
+            lags=self.lags,
+            tau=self.tau,
+            delay=self.delay,
+            driver_index=self.driver_indices[0],
+            conditioning_indices=self.conditioning_indices,
+            extra_conditioning=self.extra_conditioning,
         )
-        B = buildvectors(Xq, self.target_indices[0], V)
-        y_present = B[:, :1]
-        A = B[:, 1:]
-        vars_all = V[:, 0]
-        ii = self.driver_indices[0]
-        yz = A[:, vars_all != ii]
-        hy_xyz = _conditional_entropy_binning(np.hstack([y_present, A]))
-        hy_yz = _conditional_entropy_binning(np.hstack([y_present, yz])) if yz.size else _entropy_binning(y_present, self.c, False)
-        self.transfer_entropy_ = float(hy_yz - hy_xyz)
-        self.hy_yz_ = float(hy_yz)
-        self.hy_xyz_ = float(hy_xyz)
+        restricted = np.hstack([parts["y_past"], parts["z_past"], parts["faes_current"]])
+        full = np.hstack([parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]])
+        self.hy_yz_ = _conditional_entropy_binning(parts["y_present"], restricted)
+        self.hy_xyz_ = _conditional_entropy_binning(parts["y_present"], full)
+        self.transfer_entropy_ = float(self.hy_yz_ - self.hy_xyz_)
         return self
 
 
-class DiscreteSelfEntropy(InfoTheoryEstimator):
-    """Discrete self-entropy (information storage) estimator.
+class DiscreteSelfEntropy(DiscreteInfoTheoryEstimator):
+    """Discrete information storage estimator."""
 
-    Implements:
+    score_attr_ = "self_entropy_"
 
-    ``SE(Y) = I(Y_n ; Y_n^-) = H(Y_n) - H(Y_n | Y_n^-)``.
-    """
-
-    def __init__(self, target_indices, lags=1, c=8, quantize=True):
+    def __init__(self, target_indices, lags: int = 1, tau: int = 1, c: int = 8, quantize: bool = True):
         self.target_indices = target_indices
         self.lags = lags
+        self.tau = tau
         self.c = c
         self.quantize = quantize
 
     def fit(self, X, y=None):
-        X = np.asarray(X)
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-        x = X[:, self.target_indices]
-        if self.quantize:
-            xq = np.column_stack([_quantize_matlab(x[:, m], self.c) - 1 for m in range(x.shape[1])])
-        else:
-            xq = x
-        hy = _entropy_binning(xq[:, :1], self.c, quantize=False)
-        V = np.array([[0, l] for l in range(1, self.lags + 1)])
-        B = buildvectors(xq, 0, V)
-        hy_y = _conditional_entropy_binning(B)
-        self.self_entropy_ = float(hy - hy_y)
-        self.hy_ = float(hy)
-        self.hy_y_ = float(hy_y)
+        Xq = _prepare_discrete_trials(X, c=self.c, quantize=self.quantize)
+        parts = build_te_observations(
+            Xq,
+            target_index=self.target_indices[0],
+            lags=self.lags,
+            tau=self.tau,
+        )
+        full_target = Xq[:, :, self.target_indices[0]].reshape(-1, 1)
+        self.hy_ = _entropy_binning(full_target)
+        self.hy_y_ = _conditional_entropy_binning(parts["y_present"], parts["y_past"])
+        self.self_entropy_ = float(self.hy_ - self.hy_y_)
         return self
+
+
+__all__ = [
+    "DiscreteInfoTheoryEstimator",
+    "DiscretePartialTransferEntropy",
+    "DiscreteSelfEntropy",
+    "DiscreteTransferEntropy",
+]
