@@ -60,7 +60,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install sphinx pydata-sphinx-theme sphinx-copybutton
+          pip install sphinx pydata-sphinx-theme sphinx-copybutton plotly
 
       - name: Build docs
         run: make docs
