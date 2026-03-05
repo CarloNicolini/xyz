@@ -1,0 +1,88 @@
+# Build MEX files on multiple OS/architectures and attach zips to the GitHub release.
+# Runs when a release is published; assets appear on the release page for easy download.
+name: Release MEX assets
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-mex:
+    name: Build MEX (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Octave (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends octave octave-dev
+
+      - name: Install Octave (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install octave
+
+      - name: Build MEX files
+        run: make mex
+
+      - name: Detect architecture
+        id: arch
+        run: |
+          ARCH=$(uname -m)
+          echo "arch=${ARCH}" >> $GITHUB_OUTPUT
+          if [ "$ARCH" = "aarch64" ]; then
+            echo "label=linux-aarch64" >> $GITHUB_OUTPUT
+          elif [ "$ARCH" = "x86_64" ] && [ "$RUNNER_OS" = "Linux" ]; then
+            echo "label=linux-x86_64" >> $GITHUB_OUTPUT
+          elif [ "$ARCH" = "arm64" ]; then
+            echo "label=macos-arm64" >> $GITHUB_OUTPUT
+          elif [ "$ARCH" = "x86_64" ] && [ "$RUNNER_OS" = "macOS" ]; then
+            echo "label=macos-x86_64" >> $GITHUB_OUTPUT
+          else
+            echo "label=$RUNNER_OS-$ARCH" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create zip of MEX files
+        run: |
+          cd matlab/mex
+          zip -r ../../xyz-mex-${{ steps.arch.outputs.label }}.zip \
+            nn_prepare.m nn_search.m range_search.m \
+            nn_prepare.mex* nn_search.mex* range_search.mex* 2>/dev/null || true
+          cd ../..
+          ls -la *.zip
+
+      - name: Upload MEX zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: mex-${{ steps.arch.outputs.label }}
+          path: xyz-mex-${{ steps.arch.outputs.label }}.zip
+
+  upload-release-assets:
+    name: Attach MEX zips to release
+    runs-on: ubuntu-latest
+    needs: build-mex
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all MEX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mex-*
+          path: mex-zips
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: mex-zips/*.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
