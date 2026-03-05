@@ -10,6 +10,9 @@ From the repository root:
 
    sphinx-build -b html docs/source docs/build/html
 
+The build executes embedded Plotly code blocks (``.. plotly-exec::``), so
+interactive charts are regenerated at each build.
+
 Serve docs with live reload
 ---------------------------
 

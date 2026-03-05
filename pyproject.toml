@@ -19,6 +19,7 @@ docs = [
     "pydata-sphinx-theme>=0.16.1",
     "sphinx-autobuild>=2024.10.3",
     "sphinx-copybutton>=0.5.2",
+    "plotly>=6.0.0",
 ]
 
 [tool.uv]
