@@ -6,7 +6,8 @@ from scipy.spatial.distance import cdist
 from scipy.special import digamma
 
 from .base import InfoTheoryEstimator, InfoTheoryMixin
-from .utils import cov as covariance
+from .utils import cov as covariance, buildvectors
+from scipy.stats import f
 
 
 class MVInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
@@ -841,3 +842,1008 @@ class MVKSGPartialInformationDecomposition(MVKSGInfoTheoryEstimator):
             "synergistic": synergistic,
             "total": mi_x12_y,
         }
+
+from scipy.spatial import cKDTree
+
+class KSGTransferEntropy(InfoTheoryEstimator):
+    """
+    KSG Bivariate Transfer Entropy Estimator.
+    Maps to its_BTEknn.m
+    """
+    def __init__(self, driver_indices, target_indices, lags=1, k=3, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.lags = lags
+        self.k = k
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_YZ = np.hstack([y_past, x_past])
+        
+        M_yY = np.hstack([M_y, M_Y])
+        M_yYZ = np.hstack([M_y, M_YZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        # 1. Neighbor search in highest dimension M_yYZ
+        tree_yYZ = cKDTree(M_yYZ)
+        # Note: k+1 because self is included
+        distances, _ = tree_yYZ.query(M_yYZ, k=self.k + 1, p=p)
+        dd = distances[:, -1]
+        
+        # Avoid 0 distances
+        dd = np.maximum(dd, 1e-15)
+        
+        # 2. Range searches in lower dimensions
+        def count_neighbors(M, dists):
+            if M.shape[1] == 0:
+                return np.full(N, N - 1)
+            tree = cKDTree(M)
+            counts = np.zeros(N)
+            idx_list = tree.query_ball_point(M, r=dists, p=p)
+            for i in range(N):
+                pts = np.asarray(idx_list[i], dtype=int)
+                # Match MATLAB range_search(..., past=0): exclude the query point itself.
+                pts = pts[pts != i]
+                if p == np.inf:
+                    d_pts = np.max(np.abs(M[pts] - M[i]), axis=1)
+                else:
+                    d_pts = np.linalg.norm(M[pts] - M[i], axis=1)
+                # Count points strictly < dists[i]
+                c = len(pts) - np.sum(np.isclose(d_pts, dists[i], atol=1e-10))
+                counts[i] = max(self.k - 1, c)
+            return counts
+
+        count_yY = count_neighbors(M_yY, dd)
+        count_Y = count_neighbors(M_Y, dd)
+        count_YZ = count_neighbors(M_YZ, dd)
+        
+        from scipy.special import digamma as psi
+        TE = psi(self.k) + np.mean(psi(count_Y + 1) - psi(count_yY + 1) - psi(count_YZ + 1))
+        
+        self.transfer_entropy_ = TE
+        
+        dd2 = 2 * dd
+        dd2 = dd2[dd2 > 0]
+        if len(dd2) > 0:
+            Hy_yz = -psi(self.k) + np.mean(psi(count_YZ + 1)) + np.mean(np.log(dd2))
+        else:
+            Hy_yz = np.nan
+        self.conditional_entropy_ = Hy_yz
+        
+        return self
+
+
+class KSGPartialTransferEntropy(InfoTheoryEstimator):
+    """
+    KSG Partial Transfer Entropy Estimator.
+    Maps to its_PTEknn.m
+    """
+    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1, k=3, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.conditioning_indices = conditioning_indices
+        self.lags = lags
+        self.k = k
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        v_cond = [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        
+        V = np.array(v_target + v_driver + v_cond)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        n_c = len(v_cond)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        z_past = B[:, 1+n_t+n_d:]
+        
+        M_y = y_present
+        M_YZ = np.hstack([y_past, z_past])
+        M_XYZ = np.hstack([y_past, x_past, z_past])
+        
+        M_yYZ = np.hstack([M_y, M_YZ])
+        M_yXYZ = np.hstack([M_y, M_XYZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        tree_B = cKDTree(B)
+        distances, _ = tree_B.query(B, k=self.k + 1, p=p)
+        dd = distances[:, -1]
+        
+        # Avoid 0 distances
+        dd = np.maximum(dd, 1e-15)
+        
+        def count_neighbors(M, dists):
+            if M.shape[1] == 0:
+                return np.full(N, N - 1)
+            tree = cKDTree(M)
+            counts = np.zeros(N)
+            idx_list = tree.query_ball_point(M, r=dists, p=p)
+            for i in range(N):
+                pts = np.asarray(idx_list[i], dtype=int)
+                # Match MATLAB range_search(..., past=0): exclude the query point itself.
+                pts = pts[pts != i]
+                if p == np.inf:
+                    d_pts = np.max(np.abs(M[pts] - M[i]), axis=1)
+                else:
+                    d_pts = np.linalg.norm(M[pts] - M[i], axis=1)
+                c = len(pts) - np.sum(np.isclose(d_pts, dists[i], atol=1e-10))
+                counts[i] = max(self.k - 1, c)
+            return counts
+
+        count_XYZ = count_neighbors(M_XYZ, dd)
+        count_yYZ = count_neighbors(M_yYZ, dd)
+        count_YZ = count_neighbors(M_YZ, dd)
+        
+        from scipy.special import digamma as psi
+        # PTE formula: TE = I(Y_future; X_past | Y_past, Z_past)
+        # TE = psi(k) + <psi(count_YZ + 1) - psi(count_yYZ + 1) - psi(count_XYZ + 1)>
+        TE = psi(self.k) + np.mean(psi(count_YZ + 1) - psi(count_yYZ + 1) - psi(count_XYZ + 1))
+        
+        # NOTE: KSG estimator can be negative for very weak interactions due to sampling noise
+        self.transfer_entropy_ = TE
+        self.conditional_entropy_ = -psi(self.k) + np.mean(psi(count_XYZ + 1)) + np.mean(np.log(2 * dd))
+        
+        return self
+
+
+class KernelTransferEntropy(InfoTheoryEstimator):
+    """
+    Kernel Bivariate Transfer Entropy Estimator.
+    Maps to its_BTEker.m
+    """
+    def __init__(self, driver_indices, target_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_YZ = np.hstack([y_past, x_past])
+        
+        M_yY = np.hstack([M_y, M_Y])
+        M_yYZ = np.hstack([M_y, M_YZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_ce(M_y_and_M, M):
+            # Same logic as its_CEker:
+            # log ( count(M) / count(M_y_and_M) )
+            # We count points within distance r, excluding self-matches.
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            # Query pairs returns pairs (i, j) where i < j. 
+            # Total matches is 2 * len(pairs)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy_y = kernel_ce(M_yY, M_Y)
+        Hy_yz = kernel_ce(M_yYZ, M_YZ)
+        
+        self.transfer_entropy_ = Hy_y - Hy_yz
+        self.conditional_entropy_ = Hy_yz
+        
+        return self
+
+
+class KernelPartialTransferEntropy(InfoTheoryEstimator):
+    """
+    Kernel Partial Transfer Entropy Estimator.
+    Maps to its_PTEker.m
+    """
+    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.conditioning_indices = conditioning_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        v_cond = [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver + v_cond)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        n_c = len(v_cond)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        z_past = B[:, 1+n_t+n_d:]
+        
+        M_y = y_present
+        M_YZ = np.hstack([y_past, z_past])
+        M_XYZ = np.hstack([y_past, x_past, z_past])
+        
+        M_yYZ = np.hstack([M_y, M_YZ])
+        M_yXYZ = np.hstack([M_y, M_XYZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_ce(M_y_and_M, M):
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy_yz = kernel_ce(M_yYZ, M_YZ)
+        Hy_xyz = kernel_ce(M_yXYZ, M_XYZ)
+        
+        self.transfer_entropy_ = Hy_yz - Hy_xyz
+        self.conditional_entropy_ = Hy_xyz
+        
+        return self
+
+
+class KernelSelfEntropy(InfoTheoryEstimator):
+    """
+    Kernel Self Entropy Estimator (Information Storage).
+    Maps to its_SEker.m
+    """
+    def __init__(self, target_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_yY = np.hstack([M_y, M_Y])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_e(M):
+            if M.shape[1] == 0:
+                return np.nan
+            tree = cKDTree(M)
+            pairs = tree.query_pairs(self.r, p=p)
+            count = 2 * len(pairs)
+            
+            if count == 0:
+                return np.nan
+                
+            return -np.log(count / (N * (N - 1)))
+            
+        def kernel_ce(M_y_and_M, M):
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy = kernel_e(M_y)
+        Hy_y = kernel_ce(M_yY, M_Y)
+        
+        self.self_entropy_ = Hy - Hy_y
+        
+        return self
+    """
+    Kernel Bivariate Transfer Entropy Estimator.
+    Maps to its_BTEker.m
+    """
+    def __init__(self, driver_indices, target_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_YZ = np.hstack([y_past, x_past])
+        
+        M_yY = np.hstack([M_y, M_Y])
+        M_yYZ = np.hstack([M_y, M_YZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_ce(M_y_and_M, M):
+            # Same logic as its_CEker:
+            # log ( count(M) / count(M_y_and_M) )
+            # We count points within distance r, excluding self-matches.
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            # Query pairs returns pairs (i, j) where i < j. 
+            # Total matches is 2 * len(pairs)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy_y = kernel_ce(M_yY, M_Y)
+        Hy_yz = kernel_ce(M_yYZ, M_YZ)
+        
+        self.transfer_entropy_ = Hy_y - Hy_yz
+        self.conditional_entropy_ = Hy_yz
+        
+        return self
+
+
+class KernelPartialTransferEntropy(InfoTheoryEstimator):
+    """
+    Kernel Partial Transfer Entropy Estimator.
+    Maps to its_PTEker.m
+    """
+    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.conditioning_indices = conditioning_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        v_cond = [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver + v_cond)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        n_c = len(v_cond)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        z_past = B[:, 1+n_t+n_d:]
+        
+        M_y = y_present
+        M_YZ = np.hstack([y_past, z_past])
+        M_XYZ = np.hstack([y_past, x_past, z_past])
+        
+        M_yYZ = np.hstack([M_y, M_YZ])
+        M_yXYZ = np.hstack([M_y, M_XYZ])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_ce(M_y_and_M, M):
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy_yz = kernel_ce(M_yYZ, M_YZ)
+        Hy_xyz = kernel_ce(M_yXYZ, M_XYZ)
+        
+        self.transfer_entropy_ = Hy_yz - Hy_xyz
+        self.conditional_entropy_ = Hy_xyz
+        
+        return self
+
+
+class KernelSelfEntropy(InfoTheoryEstimator):
+    """
+    Kernel Self Entropy Estimator (Information Storage).
+    Maps to its_SEker.m
+    """
+    def __init__(self, target_indices, lags=1, r=0.5, metric='chebyshev'):
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_yY = np.hstack([M_y, M_Y])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        def kernel_e(M):
+            if M.shape[1] == 0:
+                return np.nan
+            tree = cKDTree(M)
+            pairs = tree.query_pairs(self.r, p=p)
+            count = 2 * len(pairs)
+            
+            if count == 0:
+                return np.nan
+                
+            return -np.log(count / (N * (N - 1)))
+            
+        def kernel_ce(M_y_and_M, M):
+            tree_full = cKDTree(M_y_and_M)
+            pairs_full = tree_full.query_pairs(self.r, p=p)
+            count_full = 2 * len(pairs_full)
+            
+            if M.shape[1] == 0:
+                count_reduced = N * (N - 1)
+            else:
+                tree_reduced = cKDTree(M)
+                pairs_reduced = tree_reduced.query_pairs(self.r, p=p)
+                count_reduced = 2 * len(pairs_reduced)
+            
+            if count_full == 0 or count_reduced == 0:
+                return np.nan
+                
+            return np.log(count_reduced / count_full)
+            
+        Hy = kernel_e(M_y)
+        Hy_y = kernel_ce(M_yY, M_Y)
+        
+        self.self_entropy_ = Hy - Hy_y
+        
+        return self
+    """
+    KSG Self Entropy Estimator (Information Storage).
+    Maps to its_SEknn.m
+    """
+    def __init__(self, target_indices, lags=1, k=3, metric='chebyshev'):
+        self.target_indices = target_indices
+        self.lags = lags
+        self.k = k
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        
+        M_y = y_present
+        M_Y = y_past
+        M_yY = np.hstack([M_y, M_Y])
+        
+        p = np.inf if self.metric == 'chebyshev' else 2
+        
+        tree_yY = cKDTree(M_yY)
+        distances, _ = tree_yY.query(M_yY, k=self.k + 1, p=p)
+        dd = distances[:, -1]
+        
+        # Add small value to avoid log(0) and division by 0
+        dd = np.maximum(dd, 1e-15)
+        
+        def count_neighbors(M, dists):
+            if M.shape[1] == 0:
+                return np.full(N, N - 1)
+            tree = cKDTree(M)
+            counts = np.zeros(N)
+            idx_list = tree.query_ball_point(M, r=dists, p=p)
+            for i in range(N):
+                pts = idx_list[i]
+                if p == np.inf:
+                    d_pts = np.max(np.abs(M[pts] - M[i]), axis=1)
+                else:
+                    d_pts = np.linalg.norm(M[pts] - M[i], axis=1)
+                c = len(pts) - np.sum(np.isclose(d_pts, dists[i], atol=1e-10))
+                counts[i] = max(self.k - 1, c)
+            return counts
+
+        count_Y = count_neighbors(M_Y, dd)
+        count_y = count_neighbors(M_y, dd)
+        
+        from scipy.special import digamma as psi
+        
+        # Self Entropy calculation:
+        # SE = I(y_present ; y_past) = H(y_present) + H(y_past) - H(y_present, y_past)
+        SE = psi(self.k) + np.mean(psi(N) - psi(count_y + 1) - psi(count_Y + 1))
+        
+        self.self_entropy_ = SE
+        
+        return self
+
+
+class GaussianTransferEntropy(InfoTheoryEstimator):
+    """
+    Gaussian Bivariate Transfer Entropy Estimator.
+    Maps to its_BTElin.m
+    """
+    def __init__(self, driver_indices, target_indices, lags=1):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.lags = lags
+
+    def _build_embeddings(self, X):
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target + v_driver)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        
+        y_present = B[:, 0:1]
+        n_target_lags = len(v_target)
+        y_past = B[:, 1:1+n_target_lags]
+        x_past = B[:, 1+n_target_lags:]
+        
+        return y_present, y_past, x_past
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        y_present, y_past, x_past = self._build_embeddings(X)
+        
+        res_restricted = self._ols_residuals(y_present, y_past)
+        ce_restricted = self._gaussian_entropy_from_residuals(res_restricted)
+        
+        unrestricted_past = np.hstack([y_past, x_past])
+        res_unrestricted = self._ols_residuals(y_present, unrestricted_past)
+        ce_unrestricted = self._gaussian_entropy_from_residuals(res_unrestricted)
+        
+        self.transfer_entropy_ = ce_restricted - ce_unrestricted
+        
+        self.p_value_ = self._compute_f_test(
+            res_restricted, res_unrestricted, 
+            unrestricted_past.shape[1], y_past.shape[1]
+        )
+        return self
+
+    def _ols_residuals(self, y, X):
+        coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+        return y - X @ coef
+
+    def _gaussian_entropy_from_residuals(self, residuals):
+        cov = np.atleast_2d(np.cov(residuals, rowvar=False))
+        d = residuals.shape[1] if residuals.ndim > 1 else 1
+        _, logdet = np.linalg.slogdet(cov)
+        return 0.5 * logdet + 0.5 * d * np.log(2 * np.pi * np.exp(1))
+
+    def _compute_f_test(self, res_r, res_u, n_unrestricted, n_restricted):
+        rss_r = np.sum(res_r**2)
+        rss_u = np.sum(res_u**2)
+        n = res_r.shape[0] # Matches MATLAB length(Upr)
+        num_restrictions = n_unrestricted - n_restricted
+        df2 = n - n_unrestricted
+        
+        if num_restrictions == 0 or df2 == 0 or rss_u == 0:
+            return 1.0
+            
+        f_stat = ((rss_r - rss_u) / num_restrictions) / (rss_u / df2)
+        return f.sf(f_stat, num_restrictions, df2)
+
+
+class GaussianPartialTransferEntropy(GaussianTransferEntropy):
+    """
+    Gaussian Partial Transfer Entropy Estimator.
+    Maps to its_PTElin.m
+    """
+    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1):
+        super().__init__(driver_indices, target_indices, lags)
+        self.conditioning_indices = conditioning_indices
+
+    def _build_embeddings_pte(self, X):
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        v_driver = [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        v_cond = [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        
+        V = np.array(v_target + v_driver + v_cond)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        
+        y_present = B[:, 0:1]
+        n_t = len(v_target)
+        n_d = len(v_driver)
+        n_c = len(v_cond)
+        
+        y_past = B[:, 1:1+n_t]
+        x_past = B[:, 1+n_t:1+n_t+n_d]
+        z_past = B[:, 1+n_t+n_d:]
+        
+        return y_present, y_past, x_past, z_past
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        y_present, y_past, x_past, z_past = self._build_embeddings_pte(X)
+        
+        # Restricted: y_present ~ [y_past, z_past]
+        restricted_past = np.hstack([y_past, z_past])
+        res_restricted = self._ols_residuals(y_present, restricted_past)
+        ce_restricted = self._gaussian_entropy_from_residuals(res_restricted)
+        
+        # Unrestricted: y_present ~ [y_past, x_past, z_past]
+        unrestricted_past = np.hstack([y_past, x_past, z_past])
+        res_unrestricted = self._ols_residuals(y_present, unrestricted_past)
+        ce_unrestricted = self._gaussian_entropy_from_residuals(res_unrestricted)
+        
+        self.transfer_entropy_ = ce_restricted - ce_unrestricted
+        
+        self.p_value_ = self._compute_f_test(
+            res_restricted, res_unrestricted, 
+            unrestricted_past.shape[1], restricted_past.shape[1]
+        )
+        return self
+
+
+class GaussianSelfEntropy(GaussianTransferEntropy):
+    """
+    Gaussian Self Entropy Estimator (Information Storage).
+    Maps to its_SElin.m
+    """
+    def __init__(self, target_indices, lags=1):
+        super().__init__(driver_indices=[], target_indices=target_indices, lags=lags)
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        # its_SElin is sensitive to mean and removes it
+        X = X - np.mean(X, axis=0)
+        
+        target_data = X[:, self.target_indices[0]:self.target_indices[0]+1]
+        cov_Y = np.atleast_2d(np.cov(target_data, rowvar=False))
+        _, logdet = np.linalg.slogdet(cov_Y)
+        Hy = 0.5 * logdet + 0.5 * 1 * np.log(2 * np.pi * np.exp(1))
+        
+        v_target = [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+        V = np.array(v_target)
+        
+        B = buildvectors(X, self.target_indices[0], V)
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        
+        res_unrestricted = self._ols_residuals(y_present, y_past)
+        Hy_y = self._gaussian_entropy_from_residuals(res_unrestricted)
+        
+        self.self_entropy_ = Hy - Hy_y
+        
+        # F-test
+        # Null model (restricted): no regressors -> residuals = original target series (full length)
+        # to exactly match Matlab's its_SElin.m logic: Uy=data(:,jj)
+        res_restricted_null = target_data
+        
+        self.p_value_ = self._compute_f_test(
+            res_restricted_null, res_unrestricted, 
+            y_past.shape[1], 0
+        )
+        return self
+
+
+# Clean final overrides for unstable intermediate blocks above.
+class KSGSelfEntropy(InfoTheoryEstimator):
+    """KSG self-entropy (information storage) estimator.
+
+    Estimates information stored in the target process by combining a kNN search
+    in joint space ``(Y_n, Y_n^-)`` with projected range counts in ``Y_n`` and
+    ``Y_n^-`` subspaces.
+    """
+
+    def __init__(self, target_indices, lags=1, k=3, metric="chebyshev"):
+        self.target_indices = target_indices
+        self.lags = lags
+        self.k = k
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        V = np.array([[self.target_indices[0], l] for l in range(1, self.lags + 1)])
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        m_y = y_present
+        m_Y = y_past
+        m_yY = np.hstack([m_y, m_Y])
+        p = np.inf if self.metric == "chebyshev" else 2
+        tree = cKDTree(m_yY)
+        distances, _ = tree.query(m_yY, k=self.k + 1, p=p)
+        dd = np.maximum(distances[:, -1], 1e-15)
+
+        def count_neighbors(M, dists):
+            if M.shape[1] == 0:
+                return np.full(N, N - 1.0)
+            t = cKDTree(M)
+            counts = np.zeros(N)
+            idx_list = t.query_ball_point(M, r=dists, p=p)
+            for i in range(N):
+                pts = np.asarray(idx_list[i], dtype=int)
+                # Match MATLAB range_search(..., past=0): exclude the query point itself.
+                pts = pts[pts != i]
+                if p == np.inf:
+                    d_pts = np.max(np.abs(M[pts] - M[i]), axis=1)
+                else:
+                    d_pts = np.linalg.norm(M[pts] - M[i], axis=1)
+                c = len(pts) - np.sum(np.isclose(d_pts, dists[i], atol=1e-10))
+                counts[i] = max(self.k - 1, c)
+            return counts
+
+        count_y = count_neighbors(m_y, dd)
+        count_Y = count_neighbors(m_Y, dd)
+        from scipy.special import digamma as psi
+        self.self_entropy_ = psi(self.k) + np.mean(psi(N) - psi(count_y + 1) - psi(count_Y + 1))
+        self.conditional_entropy_ = -psi(self.k) + np.mean(psi(count_Y + 1)) + np.mean(np.log(2 * dd))
+        return self
+
+
+class KernelTransferEntropy(InfoTheoryEstimator):
+    """Kernel bivariate transfer entropy estimator.
+
+    Uses Heaviside-kernel counts with radius ``r`` to approximate conditional
+    entropies in embedded spaces and computes ``TE = H(Y|Y^-) - H(Y|Y^-,X^-)``.
+    """
+
+    def __init__(self, driver_indices, target_indices, lags=1, r=0.5, metric="chebyshev"):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        V = np.array(
+            [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+            + [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+        )
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        y_present = B[:, 0:1]
+        n_t = self.lags
+        y_past = B[:, 1 : 1 + n_t]
+        x_past = B[:, 1 + n_t :]
+        m_yY = np.hstack([y_present, y_past])
+        m_yYZ = np.hstack([y_present, y_past, x_past])
+        p = np.inf if self.metric == "chebyshev" else 2
+
+        def kernel_ce(full, reduced):
+            t_full = cKDTree(full)
+            c_full = 2 * len(t_full.query_pairs(self.r, p=p))
+            if reduced.shape[1] == 0:
+                c_red = N * (N - 1)
+            else:
+                t_red = cKDTree(reduced)
+                c_red = 2 * len(t_red.query_pairs(self.r, p=p))
+            if c_full == 0 or c_red == 0:
+                return np.nan
+            return np.log(c_red / c_full)
+
+        hy_y = kernel_ce(m_yY, y_past)
+        hy_yz = kernel_ce(m_yYZ, np.hstack([y_past, x_past]))
+        self.transfer_entropy_ = hy_y - hy_yz
+        self.conditional_entropy_ = hy_yz
+        return self
+
+
+class KernelPartialTransferEntropy(InfoTheoryEstimator):
+    """Kernel partial transfer entropy estimator.
+
+    Estimates ``PTE(X->Y|Z)`` by difference of kernel-based conditional
+    entropies in ``(Y,Y^-,Z^-)`` and ``(Y,Y^-,X^-,Z^-)`` spaces.
+    """
+
+    def __init__(self, driver_indices, target_indices, conditioning_indices, lags=1, r=0.5, metric="chebyshev"):
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+        self.conditioning_indices = conditioning_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        V = np.array(
+            [[self.target_indices[0], l] for l in range(1, self.lags + 1)]
+            + [[self.driver_indices[0], l] for l in range(1, self.lags + 1)]
+            + [[self.conditioning_indices[0], l] for l in range(1, self.lags + 1)]
+        )
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        y_present = B[:, 0:1]
+        n_t = self.lags
+        n_d = self.lags
+        y_past = B[:, 1 : 1 + n_t]
+        x_past = B[:, 1 + n_t : 1 + n_t + n_d]
+        z_past = B[:, 1 + n_t + n_d :]
+        m_yYZ = np.hstack([y_present, y_past, z_past])
+        m_yXYZ = np.hstack([y_present, y_past, x_past, z_past])
+        p = np.inf if self.metric == "chebyshev" else 2
+
+        def kernel_ce(full, reduced):
+            t_full = cKDTree(full)
+            c_full = 2 * len(t_full.query_pairs(self.r, p=p))
+            if reduced.shape[1] == 0:
+                c_red = N * (N - 1)
+            else:
+                t_red = cKDTree(reduced)
+                c_red = 2 * len(t_red.query_pairs(self.r, p=p))
+            if c_full == 0 or c_red == 0:
+                return np.nan
+            return np.log(c_red / c_full)
+
+        hy_yz = kernel_ce(m_yYZ, np.hstack([y_past, z_past]))
+        hy_xyz = kernel_ce(m_yXYZ, np.hstack([y_past, x_past, z_past]))
+        self.transfer_entropy_ = hy_yz - hy_xyz
+        self.conditional_entropy_ = hy_xyz
+        return self
+
+
+class KernelSelfEntropy(InfoTheoryEstimator):
+    """Kernel self-entropy (information storage) estimator.
+
+    Computes ``SE(Y)=H(Y)-H(Y|Y^-)`` using pair-count based entropy and
+    conditional entropy approximations with radius ``r``.
+    """
+
+    def __init__(self, target_indices, lags=1, r=0.5, metric="chebyshev"):
+        self.target_indices = target_indices
+        self.lags = lags
+        self.r = r
+        self.metric = metric
+
+    def fit(self, X, y=None):
+        X = np.asarray(X)
+        V = np.array([[self.target_indices[0], l] for l in range(1, self.lags + 1)])
+        B = buildvectors(X, self.target_indices[0], V)
+        N = B.shape[0]
+        y_present = B[:, 0:1]
+        y_past = B[:, 1:]
+        m_yY = np.hstack([y_present, y_past])
+        p = np.inf if self.metric == "chebyshev" else 2
+
+        def kernel_e(M):
+            t = cKDTree(M)
+            c = 2 * len(t.query_pairs(self.r, p=p))
+            if c == 0:
+                return np.nan
+            return -np.log(c / (N * (N - 1)))
+
+        def kernel_ce(full, reduced):
+            t_full = cKDTree(full)
+            c_full = 2 * len(t_full.query_pairs(self.r, p=p))
+            if reduced.shape[1] == 0:
+                c_red = N * (N - 1)
+            else:
+                t_red = cKDTree(reduced)
+                c_red = 2 * len(t_red.query_pairs(self.r, p=p))
+            if c_full == 0 or c_red == 0:
+                return np.nan
+            return np.log(c_red / c_full)
+
+        hy = kernel_e(y_present)
+        hy_y = kernel_ce(m_yY, y_past)
+        self.self_entropy_ = hy - hy_y
+        return self

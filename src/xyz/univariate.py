@@ -13,7 +13,7 @@ def entropy_linear(A: np.ndarray) -> float:
     # Entropy for the multivariate Gaussian case:
     N, M = A.shape
     # e.g., Barnett PRL 2009
-    e = 0.5 * np.log(np.linalg.det(C)) + 0.5 * N * np.log(2 * np.pi * np.exp(1))
+    e = 0.5 * np.log(np.linalg.det(C)) + 0.5 * M * np.log(2 * np.pi * np.exp(1))
     return e
 
 
@@ -30,6 +30,12 @@ def entropy_kernel(Y: np.ndarray, r: float, metric: str = "chebyshev") -> float:
 
 # for details on Kraskov estimator
 # https://lizliz.github.io/teaspoon/_modules/teaspoon/parameter_selection/MI_delay.html
+# also read this for the case of mutual information and why the KSG estimator may return negative results
+# https://github.com/paulbrodersen/entropy_estimators/issues/11#issuecomment-2109577671
+# with the paper here
+# https://arxiv.org/abs/2405.04980
+# and a python implementation here too
+# https://github.com/moldyn/NorMI
 
 
 def entropy_binning(Y, c, quantize, log_base: str = "nat"):

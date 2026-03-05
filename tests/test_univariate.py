@@ -14,29 +14,43 @@ def test_entropy_kernel():
     print(entropy_kernel(A, 0.1))
 
 
-def test_entropy_mvn():
+def test_entropy_mvn(octave):
     """
     Compares with its_Elin
     """
-    assert np.allclose(MVNEntropy().fit(A).score(A), 14.174, rtol=1e-3)
+    command = "A = dlmread('tests/r.csv', ' '); [e, covA] = its_Elin(A); disp(e);"
+    output = octave(command)
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    expected = float(lines[-1])
+    assert np.allclose(MVNEntropy().fit(A).score(A), expected, rtol=1e-3)
 
-
-def test_condentropy_mvn():
+def test_condentropy_mvn(octave):
     """
     Compares with its_CElin
     """
     X = A[:, 1:]
     y = A[:, 0].reshape(-1, 1)
-    correct_result = 1.4168
-    assert np.allclose(MVCondEntropy().fit(X, y).score(X, y), correct_result, rtol=1e-3)
+    
+    # its_CElin takes B where first column is target, others are condition
+    command = "A = dlmread('tests/r.csv', ' '); B = [A(:, 1), A(:, 2:end)]; [ce,S,Up,Am] = its_CElin(B); disp(ce);"
+    output = octave(command)
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    expected = float(lines[-1])
+    
+    assert np.allclose(MVCondEntropy().fit(X, y).score(X, y), expected, rtol=1e-3)
 
-
-def test_mi_mvn():
+def test_mi_mvn(octave):
     X = A[:, 1:]
     y = A[:, 0].reshape(-1, 1)
-    correct_result = 0.00048932
+    
+    # Mutual information for MVN is H(Y) - H(Y|X)
+    command = "A = dlmread('tests/r.csv', ' '); B = [A(:, 1), A(:, 2:end)]; [ce,S,Up,Am] = its_CElin(B); [e, covA] = its_Elin(A(:, 1)); disp(e - ce);"
+    output = octave(command)
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    expected = float(lines[-1])
+
     assert np.allclose(
-        MVNMutualInformation().fit(X, y).score(X, y), correct_result, rtol=1e-3
+        MVNMutualInformation().fit(X, y).score(X, y), expected, rtol=1e-3
     )
 
 
