@@ -17,6 +17,9 @@ Implemented classes
 - ``xyz.GaussianTransferEntropy``
 - ``xyz.GaussianPartialTransferEntropy``
 - ``xyz.GaussianSelfEntropy``
+- ``xyz.GaussianCopulaMutualInformation``
+- ``xyz.GaussianCopulaConditionalMutualInformation``
+- ``xyz.GaussianCopulaTransferEntropy``
 
 What these estimators compute
 -----------------------------
@@ -88,6 +91,16 @@ Information storage is
    SE_Y = H(Y_t) - H(Y_t \mid Y_t^-).
 
 It quantifies how predictable the present is from the process's own past.
+
+Gaussian-copula estimators
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``GaussianCopulaMutualInformation``, ``GaussianCopulaConditionalMutualInformation``, and
+``GaussianCopulaTransferEntropy`` apply a rank-based (Gaussian copula) transform to each
+marginal, then use the same Gaussian formulas on the transformed data. They match the
+plain Gaussian estimators on Gaussian data but remain stable under monotone nonlinear
+marginals (e.g. heavy-tailed or skewed), offering a middle ground between full Gaussian
+and full k-NN.
 
 Why use the Gaussian family
 ---------------------------

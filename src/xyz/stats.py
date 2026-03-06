@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone
 
 from .preprocessing import as_trial_array
@@ -93,6 +94,133 @@ def generate_surrogates(
     return surrogates
 
 
+def _score_surrogate(estimator, surrogate, y=None) -> float:
+    est = clone(estimator)
+    est.fit(surrogate, y)
+    return float(est.score())
+
+
+def _restore_trial_shape(trials: np.ndarray, original_ndim: int):
+    if original_ndim == 1:
+        return trials[0, :, 0]
+    if original_ndim == 2:
+        return trials[0]
+    return trials
+
+
+def _sample_block_indices(n_samples: int, block_length: int, rng: np.random.Generator) -> np.ndarray:
+    indices = []
+    while len(indices) < n_samples:
+        start = int(rng.integers(0, n_samples))
+        block = (start + np.arange(block_length)) % n_samples
+        indices.extend(block.tolist())
+    return np.asarray(indices[:n_samples], dtype=int)
+
+
+def _bootstrap_sample(X, y, *, method: str, block_length: int | None, rng: np.random.Generator):
+    X_array = np.asarray(X)
+    y_array = None if y is None else np.asarray(y)
+
+    if method == "iid":
+        n_samples = X_array.shape[0]
+        indices = rng.integers(0, n_samples, size=n_samples)
+        X_sample = X_array[indices]
+        y_sample = None if y is None else y_array[indices]
+        return X_sample, y_sample
+
+    if method == "trial":
+        X_trials = as_trial_array(X_array)
+        if X_trials.shape[0] < 2:
+            raise ValueError("Trial bootstrap requires at least two trials")
+        indices = rng.integers(0, X_trials.shape[0], size=X_trials.shape[0])
+        X_sample = _restore_trial_shape(X_trials[indices], X_array.ndim)
+        if y is None:
+            return X_sample, None
+        y_trials = as_trial_array(y_array)
+        y_sample = _restore_trial_shape(y_trials[indices], y_array.ndim)
+        return X_sample, y_sample
+
+    if method == "block":
+        X_trials = as_trial_array(X_array)
+        block_length = max(2, int(block_length or max(2, X_trials.shape[1] // 10)))
+        X_boot = np.empty_like(X_trials)
+        y_trials = None if y is None else as_trial_array(y_array)
+        y_boot = None if y is None else np.empty_like(y_trials)
+        for trial_idx in range(X_trials.shape[0]):
+            indices = _sample_block_indices(X_trials.shape[1], block_length, rng)
+            X_boot[trial_idx] = X_trials[trial_idx, indices]
+            if y_boot is not None:
+                y_boot[trial_idx] = y_trials[trial_idx, indices]
+        X_sample = _restore_trial_shape(X_boot, X_array.ndim)
+        y_sample = None if y_boot is None else _restore_trial_shape(y_boot, y_array.ndim)
+        return X_sample, y_sample
+
+    raise ValueError("method must be one of 'iid', 'trial', or 'block'")
+
+
+def _score_bootstrap_sample(estimator, X, y, *, method: str, block_length: int | None, seed: int) -> float:
+    rng = _ensure_rng(seed)
+    X_sample, y_sample = _bootstrap_sample(X, y, method=method, block_length=block_length, rng=rng)
+    est = clone(estimator)
+    est.fit(X_sample, y_sample)
+    return float(est.score())
+
+
+class BootstrapEstimate(MetaEstimatorMixin, BaseEstimator):
+    """Bootstrap confidence intervals for information-theoretic estimators."""
+
+    def __init__(
+        self,
+        estimator,
+        *,
+        n_bootstrap: int = 100,
+        method: str = "iid",
+        block_length: int | None = None,
+        ci: float = 0.95,
+        random_state=None,
+        n_jobs: int | None = 1,
+    ):
+        self.estimator = estimator
+        self.n_bootstrap = n_bootstrap
+        self.method = method
+        self.block_length = block_length
+        self.ci = ci
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+
+    def fit(self, X, y=None):
+        self.estimator_ = clone(self.estimator)
+        self.estimator_.fit(X, y)
+        self.estimate_ = float(self.estimator_.score())
+
+        rng = _ensure_rng(self.random_state)
+        seeds = rng.integers(0, np.iinfo(np.uint32).max, size=int(self.n_bootstrap), dtype=np.uint32)
+        bootstrap_scores = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+            delayed(_score_bootstrap_sample)(
+                self.estimator,
+                X,
+                y,
+                method=self.method,
+                block_length=self.block_length,
+                seed=int(seed),
+            )
+            for seed in seeds
+        )
+        self.bootstrap_distribution_ = np.asarray(bootstrap_scores, dtype=float)
+        alpha = (1.0 - float(self.ci)) / 2.0
+        self.ci_low_, self.ci_high_ = np.quantile(
+            self.bootstrap_distribution_,
+            [alpha, 1.0 - alpha],
+        )
+        self.standard_error_ = float(np.std(self.bootstrap_distribution_, ddof=1))
+        return self
+
+    def score(self, X=None, y=None):
+        if X is not None:
+            self.fit(X, y)
+        return float(self.estimate_)
+
+
 class SurrogatePermutationTest(MetaEstimatorMixin, BaseEstimator):
     """Permutation-based significance testing for TE estimators."""
 
@@ -107,6 +235,7 @@ class SurrogatePermutationTest(MetaEstimatorMixin, BaseEstimator):
         shift_test: bool = False,
         shift_method: str = "time_shift",
         random_state=None,
+        n_jobs: int | None = 1,
     ):
         self.estimator = estimator
         self.n_permutations = n_permutations
@@ -116,6 +245,7 @@ class SurrogatePermutationTest(MetaEstimatorMixin, BaseEstimator):
         self.shift_test = shift_test
         self.shift_method = shift_method
         self.random_state = random_state
+        self.n_jobs = n_jobs
 
     def fit(self, X, y=None):
         if self.shift_test and getattr(self.estimator, "extra_conditioning", None) in {"Faes_Method", "faes"}:
@@ -136,11 +266,9 @@ class SurrogatePermutationTest(MetaEstimatorMixin, BaseEstimator):
             random_state=self.random_state,
             driver_index=driver_index,
         )
-        surrogate_scores = []
-        for surrogate in surrogates:
-            est = clone(self.estimator)
-            est.fit(surrogate, y)
-            surrogate_scores.append(float(est.score()))
+        surrogate_scores = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+            delayed(_score_surrogate)(self.estimator, surrogate, y) for surrogate in surrogates
+        )
         self.null_distribution_ = np.asarray(surrogate_scores, dtype=float)
         self.surrogate_scores_ = self.null_distribution_.copy()
         self.p_values_ = np.asarray(

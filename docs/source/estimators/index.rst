@@ -15,6 +15,8 @@ How to navigate this section
 - Read :doc:`kernel` if you want a fixed-radius view of local neighborhoods.
 - Read :doc:`discrete` if your data are symbolic or deliberately quantized.
 - Read :doc:`univariate` for quick helper functions and sanity checks.
+- Read :doc:`workflows` for bootstrap confidence intervals, greedy source selection,
+  and parallelization (``n_jobs``).
 
 .. toctree::
    :maxdepth: 2
@@ -24,3 +26,4 @@ How to navigate this section
    kernel
    discrete
    univariate
+   workflows

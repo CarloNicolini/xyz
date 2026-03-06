@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from scipy.special import digamma, gammaln
-from scipy.stats import f
+from scipy.stats import f, norm, rankdata
 from sklearn.utils.validation import check_is_fitted
 
 from .base import InfoTheoryEstimator, InfoTheoryMixin
@@ -135,6 +135,34 @@ def _prepare_entropy_cond_inputs(conditioning: np.ndarray, target: np.ndarray) -
     if conditioning.shape[0] != target.shape[0]:
         raise ValueError("conditioning and target must have the same number of samples")
     return conditioning, target
+
+
+def _count_points_within_radii(
+    data: np.ndarray,
+    radii: np.ndarray,
+    *,
+    metric: str,
+    strict: bool = False,
+) -> np.ndarray:
+    if data.shape[0] == 0:
+        return np.zeros(0, dtype=int)
+    p = _chebyshev_or_euclidean_p(metric)
+    query_radii = np.nextafter(radii, 0.0) if strict else radii
+    tree = cKDTree(data)
+    return np.asarray(tree.query_ball_point(data, r=query_radii, p=p, return_length=True), dtype=int)
+
+
+def _gaussian_copula_transform(data: np.ndarray) -> np.ndarray:
+    data = _as_2d(data)
+    if data.shape[1] == 0:
+        return np.empty((data.shape[0], 0), dtype=float)
+    n_samples = data.shape[0]
+    transformed = np.empty_like(data, dtype=float)
+    for col_idx in range(data.shape[1]):
+        ranks = rankdata(data[:, col_idx], method="average")
+        uniforms = (ranks - 0.5) / n_samples
+        transformed[:, col_idx] = norm.ppf(uniforms)
+    return transformed
 
 
 def _kernel_entropy(data: np.ndarray, *, radius: float, metric: str) -> float:
@@ -295,6 +323,41 @@ class MVNMutualInformation(MVInfoTheoryEstimator):
         return self
 
 
+class GaussianCopulaMutualInformation(MVInfoTheoryEstimator):
+    """Mutual information after a Gaussian-copula marginal transform."""
+
+    score_attr_ = "mutual_information_"
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y):
+        X, y = _validate_pair_inputs(X, y)
+        X_gc = _gaussian_copula_transform(X)
+        y_gc = _gaussian_copula_transform(y)
+        self.mutual_information_ = MVNMutualInformation().fit(X_gc, y_gc).mutual_information_
+        return self
+
+
+class GaussianCopulaConditionalMutualInformation(MVInfoTheoryEstimator):
+    """Conditional mutual information after a Gaussian-copula transform."""
+
+    score_attr_ = "conditional_mutual_information_"
+
+    def __init__(self):
+        pass
+
+    def fit(self, X, y, Z):
+        X, y, Z = _validate_triplet_inputs(X, y, Z)
+        X_gc = _gaussian_copula_transform(X)
+        y_gc = _gaussian_copula_transform(y)
+        Z_gc = _gaussian_copula_transform(Z)
+        self.hy_given_z_ = MVCondEntropy().fit(Z_gc, y_gc).conditional_entropy_
+        self.hy_given_xz_ = MVCondEntropy().fit(np.column_stack([X_gc, Z_gc]), y_gc).conditional_entropy_
+        self.conditional_mutual_information_ = self.hy_given_z_ - self.hy_given_xz_
+        return self
+
+
 class KSGMutualInformation(InfoTheoryMixin, InfoTheoryEstimator):
     """Kraskov-Stoegbauer-Grassberger mutual information estimator."""
 
@@ -317,21 +380,11 @@ class KSGMutualInformation(InfoTheoryMixin, InfoTheoryEstimator):
 
         joint = np.column_stack([X, y])
         radii = _joint_knn_radius(joint, k=self.k, metric=self.metric)
-        joint_distances_x = cdist(X, X, metric=self.metric)
-        joint_distances_y = cdist(y, y, metric=self.metric)
-
-        mi_sum = 0.0
-        for i in range(n_samples):
-            epsilon = radii[i]
-            if self.algorithm == 1:
-                nx = np.sum(joint_distances_x[i] < epsilon)
-                ny = np.sum(joint_distances_y[i] < epsilon)
-            else:
-                nx = np.sum(joint_distances_x[i] <= epsilon)
-                ny = np.sum(joint_distances_y[i] <= epsilon)
-            mi_sum += digamma(self.k) + digamma(n_samples) - digamma(max(nx, 1)) - digamma(max(ny, 1))
-
-        self.mutual_information_ = float(mi_sum / n_samples)
+        strict = self.algorithm == 1
+        nx = _count_points_within_radii(X, radii, metric=self.metric, strict=strict)
+        ny = _count_points_within_radii(y, radii, metric=self.metric, strict=strict)
+        mi_terms = digamma(self.k) + digamma(n_samples) - digamma(nx) - digamma(ny)
+        self.mutual_information_ = float(np.mean(mi_terms))
         return self
 
 
@@ -351,10 +404,7 @@ class KSGEntropy(InfoTheoryMixin, InfoTheoryEstimator):
         n_samples, n_dims = X.shape
         if n_samples <= self.k:
             raise ValueError(f"Number of samples ({n_samples}) must be > k ({self.k})")
-        distances = cdist(X, X, metric=self.metric)
-        np.fill_diagonal(distances, np.inf)
-        kth = np.partition(distances, self.k - 1, axis=1)[:, self.k - 1]
-        kth = np.maximum(kth, 1e-15)
+        kth = _joint_knn_radius(X, k=self.k, metric=self.metric)
         log_cd = _unit_ball_log_volume(n_dims, self.metric)
         self.entropy_ = (
             digamma(n_samples)
@@ -386,6 +436,31 @@ class MVKSGCondEntropy(MVKSGInfoTheoryEstimator):
         self.h_xy_ = KSGEntropy(k=self.k, metric=self.metric).fit(joint).entropy_
         self.h_x_ = KSGEntropy(k=self.k, metric=self.metric).fit(X).entropy_
         self.conditional_entropy_ = self.h_xy_ - self.h_x_
+        return self
+
+
+class DirectKSGConditionalMutualInformation(MVKSGInfoTheoryEstimator):
+    """Direct kNN conditional mutual information estimator."""
+
+    score_attr_ = "conditional_mutual_information_"
+
+    def fit(self, X, y, Z):
+        X, y, Z = _validate_triplet_inputs(X, y, Z)
+        joint = np.column_stack([X, y, Z])
+        xz = np.column_stack([X, Z])
+        yz = np.column_stack([y, Z])
+        radii = _joint_knn_radius(joint, k=self.k, metric=self.metric)
+        count_z = _count_neighbors_within_radius(Z, radii, metric=self.metric)
+        count_xz = _count_neighbors_within_radius(xz, radii, metric=self.metric)
+        count_yz = _count_neighbors_within_radius(yz, radii, metric=self.metric)
+        self.conditional_mutual_information_ = float(
+            digamma(self.k)
+            + np.mean(
+                digamma(count_z + 1)
+                - digamma(count_xz + 1)
+                - digamma(count_yz + 1)
+            )
+        )
         return self
 
 
@@ -479,6 +554,7 @@ class _TimeSeriesEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
         tau: int = 1,
         delay: int = 1,
         driver_index: int | None = None,
+        driver_indices: list[int] | None = None,
         conditioning_indices: list[int] | None = None,
         extra_conditioning: str | None = None,
     ) -> dict[str, np.ndarray]:
@@ -489,6 +565,7 @@ class _TimeSeriesEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
             tau=tau,
             delay=delay,
             driver_index=driver_index,
+            driver_indices=driver_indices,
             conditioning_indices=conditioning_indices,
             extra_conditioning=extra_conditioning,
         )
@@ -574,7 +651,7 @@ class KSGTransferEntropy(_KSGTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             extra_conditioning=self.extra_conditioning,
         )
         restricted = np.hstack([parts["y_past"], parts["faes_current"]])
@@ -621,7 +698,7 @@ class KSGPartialTransferEntropy(_KSGTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
@@ -730,7 +807,7 @@ class KernelTransferEntropy(_KernelTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             extra_conditioning=self.extra_conditioning,
         )
         restricted = np.hstack([parts["y_past"], parts["faes_current"]])
@@ -789,7 +866,7 @@ class KernelPartialTransferEntropy(_KernelTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
@@ -918,7 +995,7 @@ class GaussianTransferEntropy(_GaussianTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             extra_conditioning=self.extra_conditioning,
         )
         restricted = np.hstack([parts["y_past"], parts["faes_current"]])
@@ -964,7 +1041,7 @@ class GaussianPartialTransferEntropy(_GaussianTEBase):
             lags=self.lags,
             tau=self.tau,
             delay=self.delay,
-            driver_index=self.driver_indices[0],
+            driver_indices=self.driver_indices,
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
@@ -1017,7 +1094,54 @@ class GaussianSelfEntropy(_GaussianTEBase):
         return self
 
 
+class GaussianCopulaTransferEntropy(_GaussianTEBase):
+    """Transfer entropy after a Gaussian-copula marginal transform."""
+
+    score_attr_ = "transfer_entropy_"
+
+    def __init__(
+        self,
+        driver_indices,
+        target_indices,
+        lags: int = 1,
+        tau: int = 1,
+        delay: int = 1,
+        extra_conditioning: str | None = None,
+    ):
+        super().__init__(lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning)
+        self.driver_indices = driver_indices
+        self.target_indices = target_indices
+
+    def fit(self, X, y=None):
+        parts = self._embedding_parts(
+            X,
+            target_index=self.target_indices[0],
+            lags=self.lags,
+            tau=self.tau,
+            delay=self.delay,
+            driver_indices=self.driver_indices,
+            extra_conditioning=self.extra_conditioning,
+        )
+        y_present = _gaussian_copula_transform(parts["y_present"])
+        y_past = _gaussian_copula_transform(parts["y_past"])
+        x_past = _gaussian_copula_transform(parts["x_past"])
+        faes_current = _gaussian_copula_transform(parts["faes_current"])
+
+        restricted = np.hstack([y_past, faes_current])
+        full = np.hstack([y_past, x_past, faes_current])
+        res_restricted = self._ols_residuals(y_present, restricted)
+        res_unrestricted = self._ols_residuals(y_present, full)
+        self.hy_y_ = self._gaussian_entropy_from_residuals(res_restricted)
+        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(res_unrestricted)
+        self.transfer_entropy_ = float(self.hy_y_ - self.conditional_entropy_)
+        return self
+
+
 __all__ = [
+    "DirectKSGConditionalMutualInformation",
+    "GaussianCopulaConditionalMutualInformation",
+    "GaussianCopulaMutualInformation",
+    "GaussianCopulaTransferEntropy",
     "GaussianPartialTransferEntropy",
     "GaussianSelfEntropy",
     "GaussianTransferEntropy",

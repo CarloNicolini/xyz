@@ -3,31 +3,27 @@ Public API
 
 Top-level exports from ``xyz``:
 
-- ``GaussianTransferEntropy``
-- ``GaussianPartialTransferEntropy``
-- ``GaussianSelfEntropy``
-- ``MVNEntropy``
-- ``MVNMutualInformation``
-- ``KSGMutualInformation``
-- ``KSGEntropy``
-- ``MVKSGCondEntropy``
-- ``MVKSGCondMutualInformation``
-- ``MVKSGTransferEntropy``
+**Entropy and mutual information**
+- ``MVNEntropy``, ``MVNMutualInformation``
+- ``KSGEntropy``, ``KSGMutualInformation``
+- ``GaussianCopulaMutualInformation``, ``GaussianCopulaConditionalMutualInformation``
+- ``MVKSGCondEntropy``, ``MVKSGCondMutualInformation``, ``DirectKSGConditionalMutualInformation``
 - ``MVKSGPartialInformationDecomposition``
-- ``KSGTransferEntropy``
-- ``KSGPartialTransferEntropy``
-- ``KSGSelfEntropy``
-- ``KernelTransferEntropy``
-- ``KernelPartialTransferEntropy``
-- ``KernelSelfEntropy``
-- ``DiscreteTransferEntropy``
-- ``DiscretePartialTransferEntropy``
-- ``DiscreteSelfEntropy``
-- ``RagwitzEmbeddingSearchCV``
-- ``InteractionDelaySearchCV``
-- ``EnsembleTransferEntropy``
-- ``GroupTEAnalysis``
-- ``SurrogatePermutationTest``
+
+**Transfer entropy and self-entropy**
+- ``GaussianTransferEntropy``, ``GaussianPartialTransferEntropy``, ``GaussianSelfEntropy``
+- ``GaussianCopulaTransferEntropy``
+- ``KSGTransferEntropy``, ``KSGPartialTransferEntropy``, ``KSGSelfEntropy``
+- ``KernelTransferEntropy``, ``KernelPartialTransferEntropy``, ``KernelSelfEntropy``
+- ``DiscreteTransferEntropy``, ``DiscretePartialTransferEntropy``, ``DiscreteSelfEntropy``
+- ``MVKSGTransferEntropy``
+
+**Model selection and workflows**
+- ``RagwitzEmbeddingSearchCV``, ``InteractionDelaySearchCV``
+- ``GreedySourceSelectionTransferEntropy``
+- ``EnsembleTransferEntropy``, ``GroupTEAnalysis``
+- ``SurrogatePermutationTest``, ``BootstrapEstimate``
+- ``generate_surrogates``, ``fdr_bh``, ``bonferroni``
 
 Import pattern:
 
@@ -35,6 +31,8 @@ Import pattern:
 
    from xyz import (
        GaussianTransferEntropy,
+       GaussianCopulaMutualInformation,
+       BootstrapEstimate,
        InteractionDelaySearchCV,
        KSGEntropy,
        KSGMutualInformation,

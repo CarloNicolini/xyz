@@ -19,12 +19,14 @@ The implementation is validated against the ITS Toolbox workflow: the same neare
 ## Features
 
 - **Entropy**: Multivariate Gaussian entropy; Kozachenko–Leonenko (KL) differential entropy; kernel-based entropy; univariate helpers in `xyz.univariate` (linear Gaussian, kernel).
-- **Mutual information**: Kraskov–Stögbauer–Grassberger (KSG) estimator; Gaussian (linear) estimator.
-- **Conditional entropy & conditional MI**: KSG-based and Gaussian (residual-based) estimators.
-- **Transfer entropy**: Bivariate and partial transfer entropy via KSG, kernel, Gaussian (linear), and **discrete (binning-based)** methods.
+- **Mutual information**: Kraskov–Stögbauer–Grassberger (KSG) estimator; Gaussian (linear) estimator; **Gaussian-copula** estimator (rank-based, robust to monotone nonlinear marginals).
+- **Conditional entropy & conditional MI**: KSG-based, **direct kNN CMI** (`DirectKSGConditionalMutualInformation`), and Gaussian (residual-based) estimators; Gaussian-copula CMI.
+- **Transfer entropy**: Bivariate and **multivariate driver** transfer entropy via KSG, kernel, Gaussian (linear), Gaussian-copula, and **discrete (binning-based)** methods; partial TE with conditioning.
 - **Self-entropy (information storage)**: Kernel, Gaussian, and discrete (binning-based) estimators.
 - **Partial information decomposition (PID)**: Decomposition of information from two sources about a target (unique, redundant, synergistic).
-- **TRENTOOL-style workflow**: Embedding and delay search (`RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`), surrogate-based significance testing (`SurrogatePermutationTest`, `generate_surrogates`), and group/ensemble helpers (`GroupTEAnalysis`, `EnsembleTransferEntropy`).
+- **TRENTOOL-style workflow**: Embedding and delay search (`RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`), surrogate-based significance testing (`SurrogatePermutationTest`, `generate_surrogates`), and group/ensemble helpers (`GroupTEAnalysis`, `EnsembleTransferEntropy`). Search and surrogate steps support **`n_jobs`** for parallel execution.
+- **Uncertainty**: **Bootstrap confidence intervals** (`BootstrapEstimate`) with iid, trial, or block resampling.
+- **Multivariate source selection**: **Greedy source-selection TE** (`GreedySourceSelectionTransferEntropy`) for forward-selecting driver variables using partial TE.
 
 All estimators support multivariate inputs and return values in **nats** unless noted. Time-series estimators use delay embedding helpers from `xyz.preprocessing`; discrete TE/PTE/SE are available directly from the public `xyz` namespace.
 
@@ -168,9 +170,63 @@ best_delay = search.best_delay_
 best_te = search.best_score_
 ```
 
+### Gaussian-copula MI and TE (robust to nonlinear marginals)
+
+Rank-based estimators that match Gaussian on Gaussian data but stay stable under monotone nonlinear transforms:
+
+```python
+from xyz import GaussianCopulaMutualInformation, GaussianCopulaTransferEntropy
+
+# MI after rank–Gaussian transform (good for heavy-tailed or skewed data)
+mi_copula = GaussianCopulaMutualInformation().fit(x, y).score()
+
+# TE on nonlinearly observed time series (e.g. exp, sinh)
+te_copula = GaussianCopulaTransferEntropy(driver_indices=[1], target_indices=[0], lags=1).fit(data)
+```
+
+### Bootstrap confidence intervals
+
+```python
+from xyz import BootstrapEstimate, GaussianTransferEntropy
+
+bootstrap = BootstrapEstimate(
+    GaussianTransferEntropy(driver_indices=[1], target_indices=[0], lags=1),
+    n_bootstrap=200,
+    method="trial",  # or "iid", "block"
+    ci=0.95,
+    n_jobs=2,
+    random_state=0,
+).fit(data)
+
+print(bootstrap.estimate_, bootstrap.ci_low_, bootstrap.ci_high_)
+```
+
+### Multivariate drivers and greedy source selection
+
+```python
+from xyz import GaussianPartialTransferEntropy, GreedySourceSelectionTransferEntropy
+
+# Multiple drivers in one TE model (data columns: target, driver1, driver2, noise)
+te_multi = GaussianTransferEntropy(driver_indices=[1, 2], target_indices=[0], lags=1).fit(data)
+
+# Greedy forward selection of which sources to include
+selector = GreedySourceSelectionTransferEntropy(
+    GaussianPartialTransferEntropy(
+        driver_indices=[1],
+        target_indices=[0],
+        conditioning_indices=[],
+        lags=1,
+    ),
+    candidate_sources=[1, 2, 3],
+    max_sources=3,
+    min_improvement=0.01,
+).fit(data)
+# selector.selected_sources_, selector.best_estimator_, selector.best_score_
+```
+
 ### TRENTOOL-style workflow (embedding, delay, significance)
 
-Choose embedding dimension and spacing (Ragwitz), interaction delay, and test against surrogates:
+Choose embedding dimension and spacing (Ragwitz), interaction delay, and test against surrogates. Use `n_jobs` to parallelize search and surrogate scoring:
 
 ```python
 from xyz import (
@@ -183,20 +239,20 @@ from xyz import (
 base = GaussianTransferEntropy(driver_indices=[1], target_indices=[0], lags=1)
 
 # Embedding search (Ragwitz prediction error)
-embedding = RagwitzEmbeddingSearchCV(base, target_index=0, dimensions=(1, 2, 3), taus=(1, 2, 3))
+embedding = RagwitzEmbeddingSearchCV(base, target_index=0, dimensions=(1, 2, 3), taus=(1, 2, 3), n_jobs=2)
 embedding.fit(data)
 
 # Delay search
-delay = InteractionDelaySearchCV(base.set_params(**embedding.best_params_), delays=(1, 2, 3, 4, 5))
+delay = InteractionDelaySearchCV(base.set_params(**embedding.best_params_), delays=(1, 2, 3, 4, 5), n_jobs=2)
 delay.fit(data)
 
 # Surrogate permutation test
-test = SurrogatePermutationTest(delay.best_estimator_, n_permutations=100)
+test = SurrogatePermutationTest(delay.best_estimator_, n_permutations=100, n_jobs=2)
 test.fit(data)
 # test.p_value_, test.reject_  (with optional FDR correction)
 ```
 
-See the [model selection workflow](docs/source/examples/model_selection_workflow.rst) in the docs for a full example.
+See the [model selection workflow](docs/source/examples/model_selection_workflow.rst) in the docs for a full example. For bootstrap intervals, greedy source selection, and parallelization, see the [workflows](docs/source/estimators/workflows.rst) section.
 
 ---
 
@@ -324,11 +380,15 @@ For microstructure work, the discrete estimators (`DiscreteTransferEntropy`, `Di
 | Setting | Suggested estimator | Notes |
 |--------|----------------------|------|
 | Approximately Gaussian, linear dependencies | `MVNEntropy`, `GaussianTransferEntropy`, etc. | Fast; F-tests available for TE/SE. |
+| Non-Gaussian marginals, monotone nonlinearity | `GaussianCopulaMutualInformation`, `GaussianCopulaTransferEntropy` | Rank-based; robust, sample-efficient. |
 | General continuous data, no Gaussian assumption | `KSGEntropy`, `KSGMutualInformation`, `KSGTransferEntropy` | k-NN based; robust, widely used. |
-| Bivariate / partial TE with lagged time series | `KSGTransferEntropy`, `KSGPartialTransferEntropy` | Uses delay embedding (see `buildvectors` in `xyz.utils`). |
+| Conditional MI I(X;Y\|Z) with kNN | `DirectKSGConditionalMutualInformation`, `MVKSGCondMutualInformation` | Direct kNN CMI or identity-based CMI. |
+| Bivariate / multivariate driver TE | `KSGTransferEntropy`, `GaussianTransferEntropy` with `driver_indices=[i, j, ...]` | Single or multiple driver variables. |
+| Which sources drive the target? | `GreedySourceSelectionTransferEntropy` | Forward selection using partial TE. |
+| Uncertainty intervals | `BootstrapEstimate` | iid, trial, or block bootstrap; `ci_low_`, `ci_high_`. |
 | Nonparametric TE with fixed radius | `KernelTransferEntropy`, `KernelPartialTransferEntropy`, `KernelSelfEntropy` | Radius `r` must be chosen. |
 | Binned or discretized time series | `DiscreteTransferEntropy`, `DiscretePartialTransferEntropy`, `DiscreteSelfEntropy` | Available from `xyz`; set `c` bins or pass pre-quantized data. |
-| TRENTOOL-style: choose embedding, delay, and test significance | `RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`, `SurrogatePermutationTest` | Use with any TE estimator; see model selection workflow in docs. |
+| TRENTOOL-style: embedding, delay, significance | `RagwitzEmbeddingSearchCV`, `InteractionDelaySearchCV`, `SurrogatePermutationTest` | Use `n_jobs` for parallel search/surrogates. |
 
 KSG and kernel estimators can occasionally yield small negative values due to finite-sample bias; for weak dependencies, Gaussian or significance tests may be more stable.
 

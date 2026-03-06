@@ -108,6 +108,17 @@ def _normalize_conditioning_indices(conditioning_indices: Iterable[int] | None) 
     return [int(index) for index in conditioning_indices]
 
 
+def _normalize_driver_indices(
+    driver_indices: Iterable[int] | None = None,
+    driver_index: int | None = None,
+) -> list[int]:
+    if driver_indices is not None:
+        return [int(index) for index in driver_indices]
+    if driver_index is None:
+        return []
+    return [int(driver_index)]
+
+
 def build_te_observations(
     X,
     *,
@@ -116,6 +127,7 @@ def build_te_observations(
     tau: int = 1,
     delay: int = 1,
     driver_index: int | None = None,
+    driver_indices: Iterable[int] | None = None,
     conditioning_indices: Iterable[int] | None = None,
     extra_conditioning: str | None = None,
 ) -> dict[str, np.ndarray]:
@@ -128,6 +140,7 @@ def build_te_observations(
         raise ValueError("delay must be >= 1")
 
     conditioning_indices = _normalize_conditioning_indices(conditioning_indices)
+    driver_indices = _normalize_driver_indices(driver_indices, driver_index)
     trials = as_trial_array(X)
 
     y_present_all = []
@@ -138,7 +151,7 @@ def build_te_observations(
     trial_ids = []
 
     target_offsets = [1 + i * tau for i in range(lags)]
-    driver_offsets = [delay + i * tau for i in range(lags)] if driver_index is not None else []
+    driver_offsets = [delay + i * tau for i in range(lags)] if driver_indices else []
     cond_offsets = [1 + i * tau for i in range(lags)]
     max_offset = max(target_offsets + driver_offsets + cond_offsets + [0])
 
@@ -156,12 +169,13 @@ def build_te_observations(
             [trial[rows - offset, target_index] for offset in target_offsets]
         )
 
-        if driver_index is None:
+        if not driver_indices:
             x_past = np.empty((rows.size, 0))
         else:
-            x_past = np.column_stack(
-                [trial[rows - offset, driver_index] for offset in driver_offsets]
-            )
+            x_blocks = []
+            for driver_idx in driver_indices:
+                x_blocks.extend(trial[rows - offset, driver_idx] for offset in driver_offsets)
+            x_past = np.column_stack(x_blocks)
 
         if conditioning_indices:
             z_blocks = []
@@ -173,8 +187,8 @@ def build_te_observations(
         else:
             z_past = np.empty((rows.size, 0))
 
-        if use_faes and driver_index is not None:
-            faes = trial[rows, driver_index : driver_index + 1]
+        if use_faes and driver_indices:
+            faes = np.column_stack([trial[rows, driver_idx] for driver_idx in driver_indices])
         else:
             faes = np.empty((rows.size, 0))
 

@@ -1,4 +1,8 @@
 from ._continuous import (
+    DirectKSGConditionalMutualInformation,
+    GaussianCopulaConditionalMutualInformation,
+    GaussianCopulaMutualInformation,
+    GaussianCopulaTransferEntropy,
     GaussianPartialTransferEntropy,
     GaussianSelfEntropy,
     GaussianTransferEntropy,
@@ -29,21 +33,28 @@ from ._discrete import (
 )
 from .model_selection import (
     EnsembleTransferEntropy,
+    GreedySourceSelectionTransferEntropy,
     GroupTEAnalysis,
     InteractionDelaySearchCV,
     RagwitzEmbeddingSearchCV,
 )
-from .stats import SurrogatePermutationTest, bonferroni, fdr_bh, generate_surrogates
+from .stats import BootstrapEstimate, SurrogatePermutationTest, bonferroni, fdr_bh, generate_surrogates
 
 __all__ = [
+    "BootstrapEstimate",
+    "DirectKSGConditionalMutualInformation",
     "DiscreteInfoTheoryEstimator",
     "DiscretePartialTransferEntropy",
     "DiscreteSelfEntropy",
     "DiscreteTransferEntropy",
     "EnsembleTransferEntropy",
+    "GaussianCopulaConditionalMutualInformation",
+    "GaussianCopulaMutualInformation",
+    "GaussianCopulaTransferEntropy",
     "GaussianPartialTransferEntropy",
     "GaussianSelfEntropy",
     "GaussianTransferEntropy",
+    "GreedySourceSelectionTransferEntropy",
     "GroupTEAnalysis",
     "InteractionDelaySearchCV",
     "KSGEntropy",

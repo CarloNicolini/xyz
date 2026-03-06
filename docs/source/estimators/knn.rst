@@ -13,6 +13,7 @@ Implemented classes
 - ``xyz.KSGEntropy``
 - ``xyz.MVKSGCondEntropy``
 - ``xyz.MVKSGCondMutualInformation``
+- ``xyz.DirectKSGConditionalMutualInformation`` (direct k-NN CMI :math:`I(X;Y|Z)`)
 - ``xyz.MVKSGTransferEntropy``
 - ``xyz.KSGTransferEntropy``
 - ``xyz.KSGPartialTransferEntropy``
