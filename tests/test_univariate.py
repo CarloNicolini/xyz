@@ -151,6 +151,44 @@ def test_ksg_consistency():
     )
 
 
+def test_ksg_entropy_regression_values():
+    rng = np.random.default_rng(12345)
+    x_1d = rng.normal(size=(256, 1))
+    x_2d = rng.normal(size=(256, 2))
+
+    assert np.isclose(
+        KSGEntropy(k=3, metric="chebyshev").fit(x_1d).score(),
+        1.3927752346455806,
+    )
+    assert np.isclose(
+        KSGEntropy(k=3, metric="euclidean").fit(x_1d).score(),
+        1.3927752346455806,
+    )
+    assert np.isclose(
+        KSGEntropy(k=3, metric="chebyshev").fit(x_2d).score(),
+        2.820724681678224,
+    )
+
+
+def test_ksg_mutual_information_regression_values():
+    rng = np.random.default_rng(12345)
+    x = rng.normal(size=(256, 1))
+    y = 0.7 * x + 0.2 * rng.normal(size=(256, 1))
+
+    assert np.isclose(
+        KSGMutualInformation(k=3, algorithm=1, metric="chebyshev").fit(x, y).score(),
+        1.2102575690004707,
+    )
+    assert np.isclose(
+        KSGMutualInformation(k=3, algorithm=2, metric="chebyshev").fit(x, y).score(),
+        1.128601195430562,
+    )
+    assert np.isclose(
+        KSGMutualInformation(k=3, algorithm=1, metric="euclidean").fit(x, y).score(),
+        0.9003241273631847,
+    )
+
+
 def test_mvksg_conditional_entropy():
     """
     Test multivariate KSG conditional entropy estimator
@@ -217,6 +255,42 @@ def test_mvksg_conditional_mutual_information():
         f"CMI should be positive for dependent variables, got {cmi_dependent}"
     )
     print(f"CMI - Independent: {cmi_value:.4f}, Dependent: {cmi_dependent:.4f}")
+
+
+def test_direct_ksg_conditional_mutual_information():
+    np.random.seed(123)
+    n_samples = 900
+
+    z = np.random.normal(0, 1, (n_samples, 1))
+    x = z + 0.3 * np.random.normal(0, 1, (n_samples, 1))
+    y_independent = z + 0.3 * np.random.normal(0, 1, (n_samples, 1))
+    y_dependent = x + z + 0.1 * np.random.normal(0, 1, (n_samples, 1))
+
+    direct_est = DirectKSGConditionalMutualInformation(k=3)
+    cmi_independent = direct_est.fit(x, y_independent, z).score(x, y_independent, z)
+    cmi_dependent = direct_est.fit(x, y_dependent, z).score(x, y_dependent, z)
+
+    assert abs(cmi_independent) < 0.25, (
+        f"Direct KSG CMI should be ~0 for conditional independence, got {cmi_independent}"
+    )
+    assert cmi_dependent > 0.15, (
+        f"Direct KSG CMI should be positive for conditional dependence, got {cmi_dependent}"
+    )
+
+
+def test_direct_ksg_cmi_tracks_existing_mvksg_estimator():
+    rng = np.random.default_rng(321)
+    n_samples = 700
+    z = rng.normal(size=(n_samples, 2))
+    x = np.column_stack([z[:, 0] + 0.2 * rng.normal(size=n_samples), rng.normal(size=n_samples)])
+    y = np.column_stack([x[:, 0] + z[:, 1] + 0.2 * rng.normal(size=n_samples)])
+
+    direct_value = DirectKSGConditionalMutualInformation(k=3).fit(x, y, z).score()
+    identity_value = MVKSGCondMutualInformation(k=3).fit(x, y, z).score()
+
+    assert np.isfinite(direct_value)
+    assert np.isfinite(identity_value)
+    assert abs(direct_value - identity_value) < 0.35
 
 
 def test_mvksg_transfer_entropy():
