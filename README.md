@@ -30,6 +30,22 @@ All estimators support multivariate inputs and return values in **nats** unless 
 
 ---
 
+## Transfer entropy: mathematical primer (continuous variables)
+
+Transfer entropy (TE) measures the *directed* flow of information from one time series to another: how much the past of a *driver* process *X* helps predict the *target* process *Y* at the current time, over and above what is already contained in the past of *Y*. It was introduced by Schreiber (2000) and is now a standard tool in neuroscience, physiology, and complex-systems analysis.
+
+**Setting.** Consider a bivariate (or multivariate) stochastic process. Denote by *Y*<sub>ᵗ</sub> the value of the target at time ᵗ, and by *Y*<sub>ᵗ</sub><sup>⁻</sup> the *embedded past* of the target—e.g. the vector (*Y*<sub>ᵗ−τ</sub>, *Y*<sub>ᵗ−2τ</sub>, …, *Y*<sub>ᵗ−*d*τ</sub>) for embedding dimension *d* and spacing τ. Similarly, *X*<sub>ᵗ</sub><sup>⁻</sup> is the embedded past of the driver. An *interaction delay* *u* can be used so that the driver’s past is taken at ᵗ−*u*; this is the lag at which *X* is thought to influence *Y*.
+
+**Definition.** Bivariate transfer entropy from *X* to *Y* is the conditional mutual information between the driver’s past and the target’s present, given the target’s past:
+
+- **TE**<sub>*X*→*Y*</sub> = *I*(*X*<sub>ᵗ</sub><sup>⁻</sup>; *Y*<sub>ᵗ</sub> | *Y*<sub>ᵗ</sub><sup>⁻</sup>) = *H*(*Y*<sub>ᵗ</sub> | *Y*<sub>ᵗ</sub><sup>⁻</sup>) − *H*(*Y*<sub>ᵗ</sub> | *Y*<sub>ᵗ</sub><sup>⁻</sup>, *X*<sub>ᵗ</sub><sup>⁻</sup>).
+
+So TE is the reduction in uncertainty about *Y*<sub>ᵗ</sub> when we add *X*<sub>ᵗ</sub><sup>⁻</sup> to the conditioning set that already includes *Y*<sub>ᵗ</sub><sup>⁻</sup>. It is nonnegative (in the population) and zero if the driver’s past does not add predictive information beyond the target’s own past. *Partial* transfer entropy **PTE**<sub>*X*→*Y*|*Z*</sub> conditions also on a third (possibly multivariate) process *Z*<sub>ᵗ</sub><sup>⁻</sup>, so that only information not mediated or confounded by *Z* is counted. *Self-entropy* (information storage) is *H*(*Y*<sub>ᵗ</sub>) − *H*(*Y*<sub>ᵗ</sub> | *Y*<sub>ᵗ</sub><sup>⁻</sup>), i.e. how much of the present of *Y* is predictable from its own past.
+
+**Continuous variables.** For continuous state variables, the entropies above are *differential* entropies (integrals of −*p* log *p* with respect to Lebesgue measure). They are estimated from data rather than computed in closed form. In `xyz`, the **Gaussian** (linear) estimators assume the relevant conditional distributions are Gaussian and express TE via residual covariances; they are fast and allow analytical significance tests. The **k-NN** (KSG-style) and **kernel** estimators are nonparametric: they approximate entropies from nearest-neighbor counts or fixed-radius kernel sums, making minimal distributional assumptions and capturing nonlinear dependence, at the cost of more data and tuning (embedding, *k* or radius). All of these estimators target the same theoretical quantity; the choice depends on the plausibility of linearity and the amount of data available.
+
+---
+
 ## Installation
 
 From the project root (Python ≥3.12):
