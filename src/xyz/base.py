@@ -18,32 +18,6 @@ class InfoTheoryEstimator(BaseEstimator, ABC):
     score_attr_: str | None = None
 
     @staticmethod
-    def _as_2d_array(X: Any, *, name: str = "X") -> np.ndarray:
-        """Coerce an input array to shape ``(n_samples, n_features)``."""
-        X = np.asarray(X)
-        if X.ndim == 0:
-            raise ValueError(f"{name} must be at least 1-dimensional")
-        if X.ndim == 1:
-            return X.reshape(-1, 1)
-        if X.ndim == 2:
-            return X
-        raise ValueError(f"{name} must be 1D or 2D, got shape {X.shape}")
-
-    @staticmethod
-    def _as_trial_array(X: Any, *, name: str = "X") -> np.ndarray:
-        """Coerce a time-series input to ``(trials, samples, features)``."""
-        X = np.asarray(X)
-        if X.ndim == 1:
-            return X.reshape(1, -1, 1)
-        if X.ndim == 2:
-            return X[np.newaxis, ...]
-        if X.ndim == 3:
-            return X
-        raise ValueError(
-            f"{name} must be 1D, 2D or 3D for time-series estimators, got shape {X.shape}"
-        )
-
-    @staticmethod
     def _validate_matching_samples(*arrays: np.ndarray) -> None:
         """Ensure all provided arrays share the same number of rows."""
         n_samples = {np.asarray(array).shape[0] for array in arrays}

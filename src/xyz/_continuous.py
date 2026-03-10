@@ -1,27 +1,22 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Any
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree  # type: ignore
 from scipy.spatial.distance import cdist
 from scipy.special import digamma, gammaln
 from scipy.stats import f, norm, rankdata
 from sklearn.utils.validation import check_is_fitted
 
 from .base import InfoTheoryEstimator, InfoTheoryMixin
-from .preprocessing import as_2d_array, build_te_observations
+from .preprocessing import as_2d_array, as_trial_array, build_te_observations
 from .utils import cov as covariance
 
 
-def _as_2d(X, *, name: str = "X") -> np.ndarray:
-    return as_2d_array(X)
-
-
 def _validate_pair_inputs(X, y) -> tuple[np.ndarray, np.ndarray]:
-    X = _as_2d(X, name="X")
-    y = _as_2d(y, name="y")
+    X = as_2d_array(X)
+    y = as_2d_array(y)
     if X.shape[0] != y.shape[0]:
         raise ValueError("X and y must have the same number of samples")
     return X, y
@@ -29,7 +24,7 @@ def _validate_pair_inputs(X, y) -> tuple[np.ndarray, np.ndarray]:
 
 def _validate_triplet_inputs(X, y, Z) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     X, y = _validate_pair_inputs(X, y)
-    Z = _as_2d(Z, name="Z")
+    Z = as_2d_array(Z)
     if Z.shape[0] != X.shape[0]:
         raise ValueError("X, y and Z must have the same number of samples")
     return X, y, Z
@@ -88,7 +83,9 @@ def _count_neighbors_within_radius(
     return counts
 
 
-def _joint_knn_radius(data: np.ndarray, *, k: int, metric: str, trial_ids: np.ndarray | None = None) -> np.ndarray:
+def _joint_knn_radius(
+    data: np.ndarray, *, k: int, metric: str, trial_ids: np.ndarray | None = None
+) -> np.ndarray:
     if data.shape[0] <= k:
         raise ValueError(f"Number of samples ({data.shape[0]}) must be > k ({k})")
 
@@ -123,15 +120,19 @@ def _joint_knn_radius(data: np.ndarray, *, k: int, metric: str, trial_ids: np.nd
                 dist_full = dist_full[mask]
             dist_full = dist_full[dist_full > 0]
             if dist_full.size < k:
-                raise ValueError("Not enough within-trial neighbors for the requested k")
+                raise ValueError(
+                    "Not enough within-trial neighbors for the requested k"
+                )
             valid = np.partition(dist_full, k - 1)[:k]
         radii[i] = valid[-1]
     return np.maximum(radii, 1e-15)
 
 
-def _prepare_entropy_cond_inputs(conditioning: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    conditioning = _as_2d(conditioning, name="conditioning")
-    target = _as_2d(target, name="target")
+def _prepare_entropy_cond_inputs(
+    conditioning: np.ndarray, target: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    conditioning = as_2d_array(conditioning)
+    target = as_2d_array(target)
     if conditioning.shape[0] != target.shape[0]:
         raise ValueError("conditioning and target must have the same number of samples")
     return conditioning, target
@@ -149,11 +150,13 @@ def _count_points_within_radii(
     p = _chebyshev_or_euclidean_p(metric)
     query_radii = np.nextafter(radii, 0.0) if strict else radii
     tree = cKDTree(data)
-    return np.asarray(tree.query_ball_point(data, r=query_radii, p=p, return_length=True), dtype=int)
+    return np.asarray(
+        tree.query_ball_point(data, r=query_radii, p=p, return_length=True), dtype=int
+    )
 
 
 def _gaussian_copula_transform(data: np.ndarray) -> np.ndarray:
-    data = _as_2d(data)
+    data = as_2d_array(data)
     if data.shape[1] == 0:
         return np.empty((data.shape[0], 0), dtype=float)
     n_samples = data.shape[0]
@@ -231,7 +234,7 @@ class MVNEntropy(MVInfoTheoryEstimator):
         pass
 
     def fit(self, X, y=None):
-        X = _as_2d(X)
+        X = as_2d_array(X)
         self.covariance_ = covariance(X)
         n_dims = self.covariance_.shape[0]
         sign, logdet = np.linalg.slogdet(self.covariance_)
@@ -248,9 +251,11 @@ class MVLNEntropy(MVInfoTheoryEstimator):
         pass
 
     def fit(self, X, y=None):
-        X = _as_2d(X)
+        X = as_2d_array(X)
         if np.any(X <= 0):
-            raise ValueError("Log-normal entropy requires strictly positive observations")
+            raise ValueError(
+                "Log-normal entropy requires strictly positive observations"
+            )
         log_X = np.log(X)
         gaussian_entropy = MVNEntropy().fit(log_X).entropy_
         self.mean_log_ = np.mean(log_X, axis=0)
@@ -301,8 +306,8 @@ class MVCondEntropy(MVInfoTheoryEstimator):
         self.partial_covariance_ = covariance(residuals)
         n_dims = self.partial_covariance_.shape[0]
         sign, logdet = np.linalg.slogdet(self.partial_covariance_)
-        self.conditional_entropy_ = (
-            0.5 * sign * logdet + 0.5 * n_dims * np.log(2 * np.pi * np.e)
+        self.conditional_entropy_ = 0.5 * sign * logdet + 0.5 * n_dims * np.log(
+            2 * np.pi * np.e
         )
         return self
 
@@ -335,7 +340,9 @@ class GaussianCopulaMutualInformation(MVInfoTheoryEstimator):
         X, y = _validate_pair_inputs(X, y)
         X_gc = _gaussian_copula_transform(X)
         y_gc = _gaussian_copula_transform(y)
-        self.mutual_information_ = MVNMutualInformation().fit(X_gc, y_gc).mutual_information_
+        self.mutual_information_ = (
+            MVNMutualInformation().fit(X_gc, y_gc).mutual_information_
+        )
         return self
 
 
@@ -353,7 +360,11 @@ class GaussianCopulaConditionalMutualInformation(MVInfoTheoryEstimator):
         y_gc = _gaussian_copula_transform(y)
         Z_gc = _gaussian_copula_transform(Z)
         self.hy_given_z_ = MVCondEntropy().fit(Z_gc, y_gc).conditional_entropy_
-        self.hy_given_xz_ = MVCondEntropy().fit(np.column_stack([X_gc, Z_gc]), y_gc).conditional_entropy_
+        self.hy_given_xz_ = (
+            MVCondEntropy()
+            .fit(np.column_stack([X_gc, Z_gc]), y_gc)
+            .conditional_entropy_
+        )
         self.conditional_mutual_information_ = self.hy_given_z_ - self.hy_given_xz_
         return self
 
@@ -400,7 +411,7 @@ class KSGEntropy(InfoTheoryMixin, InfoTheoryEstimator):
         self.metric = metric
 
     def fit(self, X, y=None):
-        X = _as_2d(X)
+        X = as_2d_array(X)
         n_samples, n_dims = X.shape
         if n_samples <= self.k:
             raise ValueError(f"Number of samples ({n_samples}) must be > k ({self.k})")
@@ -456,9 +467,7 @@ class DirectKSGConditionalMutualInformation(MVKSGInfoTheoryEstimator):
         self.conditional_mutual_information_ = float(
             digamma(self.k)
             + np.mean(
-                digamma(count_z + 1)
-                - digamma(count_xz + 1)
-                - digamma(count_yz + 1)
+                digamma(count_z + 1) - digamma(count_xz + 1) - digamma(count_yz + 1)
             )
         )
         return self
@@ -471,11 +480,21 @@ class MVKSGCondMutualInformation(MVKSGInfoTheoryEstimator):
 
     def fit(self, X, y, Z):
         X, y, Z = _validate_triplet_inputs(X, y, Z)
-        h_x_given_z = MVKSGCondEntropy(k=self.k, metric=self.metric).fit(Z, X).conditional_entropy_
-        h_y_given_z = MVKSGCondEntropy(k=self.k, metric=self.metric).fit(Z, y).conditional_entropy_
-        h_xy_given_z = MVKSGCondEntropy(
-            k=self.k, metric=self.metric
-        ).fit(Z, np.column_stack([X, y])).conditional_entropy_
+        h_x_given_z = (
+            MVKSGCondEntropy(k=self.k, metric=self.metric)
+            .fit(Z, X)
+            .conditional_entropy_
+        )
+        h_y_given_z = (
+            MVKSGCondEntropy(k=self.k, metric=self.metric)
+            .fit(Z, y)
+            .conditional_entropy_
+        )
+        h_xy_given_z = (
+            MVKSGCondEntropy(k=self.k, metric=self.metric)
+            .fit(Z, np.column_stack([X, y]))
+            .conditional_entropy_
+        )
         self.conditional_mutual_information_ = h_x_given_z + h_y_given_z - h_xy_given_z
         return self
 
@@ -496,9 +515,11 @@ class MVKSGTransferEntropy(MVKSGInfoTheoryEstimator):
         X_past = X[: -self.lag]
         Y_past = y[: -self.lag]
         Y_future = y[self.lag :]
-        self.transfer_entropy_ = MVKSGCondMutualInformation(
-            k=self.k, metric=self.metric
-        ).fit(Y_future, X_past, Y_past).conditional_mutual_information_
+        self.transfer_entropy_ = (
+            MVKSGCondMutualInformation(k=self.k, metric=self.metric)
+            .fit(Y_future, X_past, Y_past)
+            .conditional_mutual_information_
+        )
         return self
 
 
@@ -507,7 +528,7 @@ class MVKSGPartialInformationDecomposition(MVKSGInfoTheoryEstimator):
 
     def fit(self, X1, X2, y):
         X1, X2 = _validate_pair_inputs(X1, X2)
-        y = _as_2d(y, name="y")
+        y = as_2d_array(y)
         if y.shape[0] != X1.shape[0]:
             raise ValueError("X1, X2 and y must have the same number of samples")
 
@@ -594,7 +615,9 @@ class _KSGTEBase(_TimeSeriesEstimator):
     def _fit_conditional_measure(self, y_present, restricted, full, trial_ids):
         m_y_restricted = np.hstack([y_present, restricted])
         joint = np.hstack([y_present, full])
-        radii = _joint_knn_radius(joint, k=self.k, metric=self.metric, trial_ids=trial_ids)
+        radii = _joint_knn_radius(
+            joint, k=self.k, metric=self.metric, trial_ids=trial_ids
+        )
         count_restricted = _count_neighbors_within_radius(
             restricted, radii, metric=self.metric, trial_ids=trial_ids
         )
@@ -656,8 +679,10 @@ class KSGTransferEntropy(_KSGTEBase):
         )
         restricted = np.hstack([parts["y_past"], parts["faes_current"]])
         full = np.hstack([parts["y_past"], parts["x_past"], parts["faes_current"]])
-        self.transfer_entropy_, self.conditional_entropy_ = self._fit_conditional_measure(
-            parts["y_present"], restricted, full, parts["trial_ids"]
+        self.transfer_entropy_, self.conditional_entropy_ = (
+            self._fit_conditional_measure(
+                parts["y_present"], restricted, full, parts["trial_ids"]
+            )
         )
         return self
 
@@ -702,10 +727,16 @@ class KSGPartialTransferEntropy(_KSGTEBase):
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
-        restricted = np.hstack([parts["y_past"], parts["z_past"], parts["faes_current"]])
-        full = np.hstack([parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]])
-        self.transfer_entropy_, self.conditional_entropy_ = self._fit_conditional_measure(
-            parts["y_present"], restricted, full, parts["trial_ids"]
+        restricted = np.hstack(
+            [parts["y_past"], parts["z_past"], parts["faes_current"]]
+        )
+        full = np.hstack(
+            [parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]]
+        )
+        self.transfer_entropy_, self.conditional_entropy_ = (
+            self._fit_conditional_measure(
+                parts["y_present"], restricted, full, parts["trial_ids"]
+            )
         )
         return self
 
@@ -734,7 +765,9 @@ class KSGSelfEntropy(_KSGTEBase):
             tau=self.tau,
         )
         joint = np.hstack([parts["y_present"], parts["y_past"]])
-        radii = _joint_knn_radius(joint, k=self.k, metric=self.metric, trial_ids=parts["trial_ids"])
+        radii = _joint_knn_radius(
+            joint, k=self.k, metric=self.metric, trial_ids=parts["trial_ids"]
+        )
         count_y = _count_neighbors_within_radius(
             parts["y_present"], radii, metric=self.metric, trial_ids=parts["trial_ids"]
         )
@@ -744,7 +777,9 @@ class KSGSelfEntropy(_KSGTEBase):
         n_effective = joint.shape[0]
         self.self_entropy_ = float(
             digamma(self.k)
-            + np.mean(digamma(n_effective) - digamma(count_y + 1) - digamma(count_y_past + 1))
+            + np.mean(
+                digamma(n_effective) - digamma(count_y + 1) - digamma(count_y_past + 1)
+            )
         )
         self.conditional_entropy_ = float(
             -digamma(self.k)
@@ -870,8 +905,12 @@ class KernelPartialTransferEntropy(_KernelTEBase):
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
-        restricted = np.hstack([parts["y_past"], parts["z_past"], parts["faes_current"]])
-        full = np.hstack([parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]])
+        restricted = np.hstack(
+            [parts["y_past"], parts["z_past"], parts["faes_current"]]
+        )
+        full = np.hstack(
+            [parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]]
+        )
         self.hy_yz_ = _kernel_conditional_entropy(
             np.hstack([parts["y_present"], restricted]),
             restricted,
@@ -913,7 +952,9 @@ class KernelSelfEntropy(_KernelTEBase):
             lags=self.lags,
             tau=self.tau,
         )
-        self.hy_ = _kernel_entropy(parts["y_present"], radius=self.r, metric=self.metric)
+        self.hy_ = _kernel_entropy(
+            parts["y_present"], radius=self.r, metric=self.metric
+        )
         self.conditional_entropy_ = _kernel_conditional_entropy(
             np.hstack([parts["y_present"], parts["y_past"]]),
             parts["y_past"],
@@ -984,7 +1025,9 @@ class GaussianTransferEntropy(_GaussianTEBase):
         delay: int = 1,
         extra_conditioning: str | None = None,
     ):
-        super().__init__(lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning)
+        super().__init__(
+            lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning
+        )
         self.driver_indices = driver_indices
         self.target_indices = target_indices
 
@@ -1003,7 +1046,9 @@ class GaussianTransferEntropy(_GaussianTEBase):
         res_restricted = self._ols_residuals(parts["y_present"], restricted)
         res_unrestricted = self._ols_residuals(parts["y_present"], full)
         self.hy_y_ = self._gaussian_entropy_from_residuals(res_restricted)
-        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(res_unrestricted)
+        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(
+            res_unrestricted
+        )
         self.transfer_entropy_ = float(self.hy_y_ - self.conditional_entropy_)
         self.p_value_ = self._compute_f_test(
             res_unrestricted,
@@ -1029,7 +1074,9 @@ class GaussianPartialTransferEntropy(_GaussianTEBase):
         delay: int = 1,
         extra_conditioning: str | None = None,
     ):
-        super().__init__(lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning)
+        super().__init__(
+            lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning
+        )
         self.driver_indices = driver_indices
         self.target_indices = target_indices
         self.conditioning_indices = conditioning_indices
@@ -1045,12 +1092,18 @@ class GaussianPartialTransferEntropy(_GaussianTEBase):
             conditioning_indices=self.conditioning_indices,
             extra_conditioning=self.extra_conditioning,
         )
-        restricted = np.hstack([parts["y_past"], parts["z_past"], parts["faes_current"]])
-        full = np.hstack([parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]])
+        restricted = np.hstack(
+            [parts["y_past"], parts["z_past"], parts["faes_current"]]
+        )
+        full = np.hstack(
+            [parts["y_past"], parts["x_past"], parts["z_past"], parts["faes_current"]]
+        )
         res_restricted = self._ols_residuals(parts["y_present"], restricted)
         res_unrestricted = self._ols_residuals(parts["y_present"], full)
         self.hy_yz_ = self._gaussian_entropy_from_residuals(res_restricted)
-        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(res_unrestricted)
+        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(
+            res_unrestricted
+        )
         self.transfer_entropy_ = float(self.hy_yz_ - self.conditional_entropy_)
         self.p_value_ = self._compute_f_test(
             res_unrestricted,
@@ -1073,7 +1126,7 @@ class GaussianSelfEntropy(_GaussianTEBase):
     def fit(self, X, y=None):
         X = np.asarray(X)
         X = X - np.mean(X, axis=-2, keepdims=True)
-        X_trials = self._as_trial_array(X, name="X")
+        X_trials = as_trial_array(X)
         parts = self._embedding_parts(
             X,
             target_index=self.target_indices[0],
@@ -1083,7 +1136,9 @@ class GaussianSelfEntropy(_GaussianTEBase):
         target_series = X_trials[:, :, self.target_indices[0]].reshape(-1, 1)
         self.hy_ = self._gaussian_entropy_from_residuals(target_series)
         res_unrestricted = self._ols_residuals(parts["y_present"], parts["y_past"])
-        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(res_unrestricted)
+        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(
+            res_unrestricted
+        )
         self.self_entropy_ = float(self.hy_ - self.conditional_entropy_)
         self.p_value_ = self._compute_f_test(
             res_unrestricted,
@@ -1108,7 +1163,9 @@ class GaussianCopulaTransferEntropy(_GaussianTEBase):
         delay: int = 1,
         extra_conditioning: str | None = None,
     ):
-        super().__init__(lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning)
+        super().__init__(
+            lags=lags, tau=tau, delay=delay, extra_conditioning=extra_conditioning
+        )
         self.driver_indices = driver_indices
         self.target_indices = target_indices
 
@@ -1132,7 +1189,9 @@ class GaussianCopulaTransferEntropy(_GaussianTEBase):
         res_restricted = self._ols_residuals(y_present, restricted)
         res_unrestricted = self._ols_residuals(y_present, full)
         self.hy_y_ = self._gaussian_entropy_from_residuals(res_restricted)
-        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(res_unrestricted)
+        self.conditional_entropy_ = self._gaussian_entropy_from_residuals(
+            res_unrestricted
+        )
         self.transfer_entropy_ = float(self.hy_y_ - self.conditional_entropy_)
         return self
 
