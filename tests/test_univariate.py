@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from xyz.univariate import entropy_linear, entropy_kernel
-from xyz._continuos import *
+from xyz._continuous import *
 
 A = np.loadtxt("tests/r.csv")
 

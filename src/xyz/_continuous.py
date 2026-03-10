@@ -226,7 +226,29 @@ class MVInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
 
 
 class MVNEntropy(MVInfoTheoryEstimator):
-    """Differential entropy under a multivariate Gaussian assumption."""
+    """Differential entropy under a multivariate Gaussian assumption.
+
+    For covariance :math:`C`, :math:`H = \\frac{1}{2}\\log\\det(C) + \\frac{M}{2}\\log(2\\pi e)`.
+
+    Parameters
+    ----------
+    None
+
+    Attributes
+    ----------
+    entropy_ : float
+        Fitted differential entropy in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import MVNEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> A = rng.normal(size=(500, 3))
+    >>> est = MVNEntropy().fit(A)
+    >>> np.isfinite(est.score())
+    True
+    """
 
     score_attr_ = "entropy_"
 
@@ -243,7 +265,25 @@ class MVNEntropy(MVInfoTheoryEstimator):
 
 
 class MVLNEntropy(MVInfoTheoryEstimator):
-    """Differential entropy for log-normal observations."""
+    """Differential entropy for log-normal observations.
+
+    Transforms :math:`X \\mapsto \\log X` and uses Gaussian entropy plus
+    :math:`\\mathbb{E}[\\log X]` correction. Data must be strictly positive.
+
+    Parameters
+    ----------
+    None
+
+    Attributes
+    ----------
+    entropy_ : float
+        Fitted entropy in nats (after :meth:`fit`).
+
+    Raises
+    ------
+    ValueError
+        If any observation is non-positive.
+    """
 
     score_attr_ = "entropy_"
 
@@ -290,7 +330,31 @@ class MVExponentialEntropy(MVInfoTheoryEstimator):
 
 
 class MVCondEntropy(MVInfoTheoryEstimator):
-    """Conditional entropy ``H(Y|X)`` under a linear-Gaussian model."""
+    """Conditional entropy :math:`H(Y|X)` under a linear-Gaussian model.
+
+    Fits :math:`Y \\approx X\\beta` and uses the residual covariance to compute
+    :math:`H(Y|X)` as the entropy of the residual.
+
+    Parameters
+    ----------
+    None
+
+    Attributes
+    ----------
+    conditional_entropy_ : float
+        Fitted :math:`H(Y|X)` in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import MVCondEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(500, 2))
+    >>> y = X[:, :1] + 0.3 * rng.normal(size=(500, 1))
+    >>> est = MVCondEntropy().fit(X, y)
+    >>> np.isfinite(est.conditional_entropy_)
+    True
+    """
 
     score_attr_ = "conditional_entropy_"
 
@@ -313,7 +377,30 @@ class MVCondEntropy(MVInfoTheoryEstimator):
 
 
 class MVNMutualInformation(MVInfoTheoryEstimator):
-    """Mutual information under a multivariate Gaussian assumption."""
+    """Mutual information under a multivariate Gaussian assumption.
+
+    :math:`I(X;Y) = H(Y) - H(Y|X)` with Gaussian entropy and conditional entropy.
+
+    Parameters
+    ----------
+    None
+
+    Attributes
+    ----------
+    mutual_information_ : float
+        Fitted :math:`I(X;Y)` in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import MVNMutualInformation
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(500, 2))
+    >>> y = X[:, :1] + 0.3 * rng.normal(size=(500, 1))
+    >>> est = MVNMutualInformation().fit(X, y)
+    >>> np.isfinite(est.mutual_information_)
+    True
+    """
 
     score_attr_ = "mutual_information_"
 
@@ -329,7 +416,31 @@ class MVNMutualInformation(MVInfoTheoryEstimator):
 
 
 class GaussianCopulaMutualInformation(MVInfoTheoryEstimator):
-    """Mutual information after a Gaussian-copula marginal transform."""
+    """Mutual information after a Gaussian-copula marginal transform.
+
+    Ranks each variable to uniforms then applies inverse Gaussian CDF; computes
+    MI on the transformed data (nonparametric in marginals, Gaussian in dependence).
+
+    Parameters
+    ----------
+    None
+
+    Attributes
+    ----------
+    mutual_information_ : float
+        Fitted MI in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import GaussianCopulaMutualInformation
+    >>> rng = np.random.default_rng(404)
+    >>> x = rng.normal(size=(500, 1))
+    >>> y = 0.6 * x + 0.3 * rng.normal(size=(500, 1))
+    >>> est = GaussianCopulaMutualInformation().fit(x, y)
+    >>> est.mutual_information_ > 0
+    True
+    """
 
     score_attr_ = "mutual_information_"
 
@@ -370,7 +481,39 @@ class GaussianCopulaConditionalMutualInformation(MVInfoTheoryEstimator):
 
 
 class KSGMutualInformation(InfoTheoryMixin, InfoTheoryEstimator):
-    """Kraskov-Stoegbauer-Grassberger mutual information estimator."""
+    """Kraskov–Stögbauer–Grassberger (KSG) k-NN mutual information estimator.
+
+    Estimates :math:`I(X;Y)` from k-nearest neighbor distances in the joint and
+    marginal spaces. ``algorithm=1`` (default) uses the stricter radius; ``algorithm=2``
+    uses the larger radius (often more stable).
+
+    Parameters
+    ----------
+    k : int, optional
+        Number of neighbors. Default is 3.
+    algorithm : {1, 2}, optional
+        KSG variant. Default is 1.
+    metric : str, optional
+        Distance metric (``"chebyshev"`` or ``"euclidean"``). Default is ``"chebyshev"``.
+
+    Attributes
+    ----------
+    mutual_information_ : float
+        Fitted MI in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import KSGMutualInformation
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(1000, 1))
+    >>> y = rng.normal(size=(1000, 1))
+    >>> mi_ind = KSGMutualInformation(k=3).fit(X, y).score()
+    >>> y_corr = 0.7 * X + 0.3 * rng.normal(size=(1000, 1))
+    >>> mi_corr = KSGMutualInformation(k=3).fit(X, y_corr).score()
+    >>> mi_corr > mi_ind
+    True
+    """
 
     score_attr_ = "mutual_information_"
 
@@ -400,7 +543,34 @@ class KSGMutualInformation(InfoTheoryMixin, InfoTheoryEstimator):
 
 
 class KSGEntropy(InfoTheoryMixin, InfoTheoryEstimator):
-    """Kozachenko-Leonenko differential entropy estimator."""
+    """Kozachenko–Leonenko k-NN differential entropy estimator.
+
+    Estimates :math:`H(X)` from the distance to the k-th nearest neighbor and
+    the log-volume of the unit ball for the chosen metric.
+
+    Parameters
+    ----------
+    k : int, optional
+        Number of neighbors. Default is 3.
+    metric : str, optional
+        Distance metric (``"chebyshev"`` or ``"euclidean"``). Default is ``"chebyshev"``.
+
+    Attributes
+    ----------
+    entropy_ : float
+        Fitted differential entropy in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import KSGEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(0, 2, (10000, 1))
+    >>> est = KSGEntropy(k=3).fit(X)
+    >>> theoretical = 0.5 * np.log(2 * np.pi * np.e * 4)
+    >>> abs(est.entropy_ - theoretical) < 0.1
+    True
+    """
 
     score_attr_ = "entropy_"
 
@@ -437,7 +607,7 @@ class MVKSGInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
 
 
 class MVKSGCondEntropy(MVKSGInfoTheoryEstimator):
-    """Multivariate conditional entropy ``H(Y|X)`` via KSG identities."""
+    """Multivariate conditional entropy :math:`H(Y|X)` via KSG :math:`H(X,Y) - H(X)`."""
 
     score_attr_ = "conditional_entropy_"
 
@@ -500,7 +670,7 @@ class MVKSGCondMutualInformation(MVKSGInfoTheoryEstimator):
 
 
 class MVKSGTransferEntropy(MVKSGInfoTheoryEstimator):
-    """Multivariate TE computed as conditional mutual information."""
+    """Multivariate transfer entropy as :math:`I(X_{t-\\tau}; Y_t | Y_{t-\\tau})` (single lag)."""
 
     score_attr_ = "transfer_entropy_"
 
@@ -524,7 +694,10 @@ class MVKSGTransferEntropy(MVKSGInfoTheoryEstimator):
 
 
 class MVKSGPartialInformationDecomposition(MVKSGInfoTheoryEstimator):
-    """A simple minimum-redundancy PID based on KSG MI estimates."""
+    """Partial information decomposition (PID) of two sources onto target via KSG MI.
+
+    Decomposes :math:`I(X_1,X_2; Y)` into unique, redundant, and synergistic terms.
+    """
 
     def fit(self, X1, X2, y):
         X1, X2 = _validate_pair_inputs(X1, X2)
@@ -641,7 +814,53 @@ class _KSGTEBase(_TimeSeriesEstimator):
 
 
 class KSGTransferEntropy(_KSGTEBase):
-    """KSG bivariate transfer entropy estimator."""
+    """KSG (k-NN) bivariate transfer entropy estimator.
+
+    Estimates :math:`TE_{X \\to Y}` from time-series data using k-nearest neighbor
+    conditional entropy. Expects array ``X`` with shape ``(n_trials, n_samples, n_features)``
+    or 2D equivalent; driver and target are column indices.
+
+    Parameters
+    ----------
+    driver_indices : array-like
+        Column index(es) of the driver variable(s).
+    target_indices : array-like
+        Column index(es) of the target variable(s).
+    lags : int, optional
+        Number of past lags for embedding. Default is 1.
+    tau : int, optional
+        Lag step (samples). Default is 1.
+    delay : int, optional
+        Delay from driver to target. Default is 1.
+    k : int, optional
+        Number of neighbors. Default is 3.
+    metric : str, optional
+        Distance metric. Default is ``"chebyshev"``.
+    extra_conditioning : str or None, optional
+        Optional extra conditioning (e.g. ``"Faes_Method"``). Default is None.
+
+    Attributes
+    ----------
+    transfer_entropy_ : float
+        Fitted TE in nats (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import KSGTransferEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> trials = []
+    >>> for _ in range(4):
+    ...     driver = rng.normal(size=180)
+    ...     target = np.zeros(180)
+    ...     for t in range(1, 180):
+    ...         target[t] = 0.4 * target[t-1] + 0.5 * driver[t-1] + 0.1 * rng.normal()
+    ...     trials.append(np.column_stack([target, driver]))
+    >>> X = np.stack(trials)
+    >>> est = KSGTransferEntropy(driver_indices=[1], target_indices=[0], lags=1, k=3).fit(X)
+    >>> est.transfer_entropy_ > 0
+    True
+    """
 
     score_attr_ = "transfer_entropy_"
 

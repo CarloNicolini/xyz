@@ -7,7 +7,32 @@ from scipy.spatial import cKDTree
 
 
 def as_2d_array(X) -> np.ndarray:
-    """Return an array with shape ``(n_samples, n_features)``."""
+    """Coerce input to a 2D array with shape (n_samples, n_features).
+
+    Parameters
+    ----------
+    X : array-like
+        1D or 2D array.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(n_samples, n_features)``; 1D input becomes ``(n, 1)``.
+
+    Raises
+    ------
+    ValueError
+        If ``X.ndim`` is not 1 or 2.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import as_2d_array
+    >>> as_2d_array(np.array([1, 2, 3])).shape
+    (3, 1)
+    >>> as_2d_array(np.random.randn(10, 2)).shape
+    (10, 2)
+    """
     X = np.asarray(X)
     if X.ndim == 1:
         return X.reshape(-1, 1)
@@ -17,7 +42,32 @@ def as_2d_array(X) -> np.ndarray:
 
 
 def as_trial_array(X) -> np.ndarray:
-    """Return an array with shape ``(n_trials, n_samples, n_features)``."""
+    """Coerce input to trial format (n_trials, n_samples, n_features).
+
+    Parameters
+    ----------
+    X : array-like
+        1D, 2D, or 3D array. 1D → (1, n, 1); 2D → (1, n_samples, n_features).
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(n_trials, n_samples, n_features)``.
+
+    Raises
+    ------
+    ValueError
+        If ``X.ndim`` is not 1, 2, or 3.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import as_trial_array
+    >>> X = np.random.randn(50, 2)
+    >>> T = as_trial_array(X)
+    >>> T.shape
+    (1, 50, 2)
+    """
     X = np.asarray(X)
     if X.ndim == 1:
         return X.reshape(1, -1, 1)
@@ -29,17 +79,61 @@ def as_trial_array(X) -> np.ndarray:
 
 
 def iter_trials(X):
-    """Yield per-trial arrays of shape ``(n_samples, n_features)``."""
+    """Iterate over trials, yielding arrays of shape (n_samples, n_features).
+
+    Parameters
+    ----------
+    X : array-like
+        Data in any format accepted by :func:`as_trial_array`.
+
+    Yields
+    ------
+    np.ndarray
+        One array per trial.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import iter_trials
+    >>> X = np.random.randn(2, 30, 2)  # 2 trials
+    >>> for trial in iter_trials(X):
+    ...     print(trial.shape)
+    (30, 2)
+    (30, 2)
+    """
     for trial in as_trial_array(X):
         yield np.asarray(trial)
 
 
 def estimate_autocorrelation_decay(x, max_lag: int = 1000, threshold: float | None = None) -> int:
-    """Estimate the autocorrelation decay time in samples.
+    """Estimate autocorrelation decay time (ACT) in samples.
 
-    The estimate is the first positive lag whose normalized autocorrelation
-    drops below ``threshold``. By default, the threshold is ``exp(-1)``, a
-    simple proxy for the decay time used in ACT-based workflows.
+    Returns the first positive lag :math:`\\tau` at which the normalized
+    autocorrelation :math:`r(\\tau) \\le` threshold. Default threshold is
+    :math:`e^{-1}`, a common proxy for the decay time.
+
+    Parameters
+    ----------
+    x : array-like
+        1D time series.
+    max_lag : int, optional
+        Maximum lag to consider. Default is 1000.
+    threshold : float or None, optional
+        Stop when autocorrelation falls below this. Default is :math:`e^{-1}`.
+
+    Returns
+    -------
+    int
+        Estimated ACT (samples).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import estimate_autocorrelation_decay
+    >>> x = np.cumsum(np.random.randn(500))
+    >>> act = estimate_autocorrelation_decay(x, max_lag=100)
+    >>> 1 <= act <= 101
+    True
     """
     x = np.asarray(x).reshape(-1)
     if x.size < 3:
@@ -61,7 +155,31 @@ def estimate_autocorrelation_decay(x, max_lag: int = 1000, threshold: float | No
 
 
 def estimate_trial_acts(X, target_index: int, max_lag: int = 1000) -> np.ndarray:
-    """Estimate trial-wise ACT values for a target variable."""
+    """Estimate autocorrelation decay time per trial for one target column.
+
+    Parameters
+    ----------
+    X : array-like
+        Data in trial format (see :func:`as_trial_array`).
+    target_index : int
+        Column index of the target variable.
+    max_lag : int, optional
+        Maximum lag for :func:`estimate_autocorrelation_decay`. Default is 1000.
+
+    Returns
+    -------
+    np.ndarray
+        One ACT value per trial, shape ``(n_trials,)``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import as_trial_array, estimate_trial_acts
+    >>> X = np.random.randn(3, 200, 2)
+    >>> acts = estimate_trial_acts(X, target_index=0, max_lag=50)
+    >>> acts.shape
+    (3,)
+    """
     return np.asarray(
         [
             estimate_autocorrelation_decay(trial[:, target_index], max_lag=max_lag)
@@ -79,14 +197,41 @@ def select_trials_by_act(
     act_threshold: int | None = None,
     min_trials: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Select trials whose ACT does not exceed a threshold.
+    """Select trials whose autocorrelation decay time is below a threshold.
+
+    Parameters
+    ----------
+    X : array-like
+        Data in trial format.
+    target_index : int
+        Column index of the target for ACT estimation.
+    max_lag : int, optional
+        Max lag for ACT. Default is 1000.
+    act_threshold : int or None, optional
+        Keep only trials with ACT <= this. If None, no filtering (all trials returned).
+    min_trials : int, optional
+        Minimum number of trials that must remain after filtering. Default is 1.
 
     Returns
     -------
-    selected_trials : ndarray
-        Subset of the original trials.
-    acts : ndarray
-        Estimated ACT values for all trials before filtering.
+    selected_trials : np.ndarray
+        Subset of trials with ACT <= act_threshold (or all if act_threshold is None).
+    acts : np.ndarray
+        ACT value for each original trial.
+
+    Raises
+    ------
+    ValueError
+        If filtering would leave fewer than min_trials.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import as_trial_array, select_trials_by_act
+    >>> X = np.random.randn(4, 300, 2)
+    >>> trials, acts = select_trials_by_act(X, 0, act_threshold=50, min_trials=2)
+    >>> trials.shape[0] <= 4 and len(acts) == 4
+    True
     """
     trials = as_trial_array(X)
     acts = estimate_trial_acts(trials, target_index=target_index, max_lag=max_lag)
@@ -131,7 +276,50 @@ def build_te_observations(
     conditioning_indices: Iterable[int] | None = None,
     extra_conditioning: str | None = None,
 ) -> dict[str, np.ndarray]:
-    """Build TE/PTE/SE state-space matrices from one or more trials."""
+    """Build transfer-entropy state-space matrices from trial data.
+
+    Constructs present/past blocks for target, driver(s), and optional
+    conditioning variables across trials. Used internally by TE estimators.
+
+    Parameters
+    ----------
+    X : array-like
+        Data in trial format (n_trials, n_samples, n_features).
+    target_index : int
+        Column index of the target.
+    lags : int
+        Number of past lags (embedding dimension).
+    tau : int, optional
+        Lag step (samples). Default is 1.
+    delay : int, optional
+        Delay from driver to target (samples). Default is 1.
+    driver_index, driver_indices : int or iterable of int, optional
+        Driver column index(s).
+    conditioning_indices : iterable of int or None, optional
+        Column indices for conditioning (e.g. for PTE).
+    extra_conditioning : str or None, optional
+        If ``"Faes_Method"`` or ``"faes"``, include current driver in conditioning.
+
+    Returns
+    -------
+    dict
+        Keys: ``"y_present"``, ``"y_past"``, ``"x_past"``, ``"z_past"``,
+        ``"faes_current"``, ``"trial_ids"``. Values are concatenated over trials.
+
+    Raises
+    ------
+    ValueError
+        If lags, tau, or delay < 1, or no valid samples remain.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import build_te_observations, as_trial_array
+    >>> X = np.random.randn(1, 200, 2)
+    >>> out = build_te_observations(X, target_index=0, lags=2, driver_index=1)
+    >>> out["y_present"].shape[0] == out["x_past"].shape[0]
+    True
+    """
     if lags < 1:
         raise ValueError("lags must be >= 1")
     if tau < 1:
@@ -229,11 +417,49 @@ def ragwitz_prediction_error(
     prediction_horizon: int = 1,
     metric: str = "chebyshev",
 ) -> float:
-    """Estimate local prediction error for a 1D time series.
+    """Ragwitz criterion: local prediction error for embedding (dim, tau).
 
-    This is a lightweight Python approximation of the Ragwitz criterion: embed
-    the target time series with dimension ``dim`` and spacing ``tau``, predict
-    the future value from nearby states, and return the mean squared error.
+    Embeds the 1D series with dimension ``dim`` and spacing ``tau``, finds
+    :math:`k` nearest neighbors in embedding space, and returns the mean
+    squared error of predicting the future value from neighbors (Theiler
+    window and metric as specified).
+
+    Parameters
+    ----------
+    x : array-like
+        1D time series.
+    dim : int
+        Embedding dimension.
+    tau : int
+        Embedding delay (samples).
+    k_neighbors : int, optional
+        Number of neighbors for local prediction. Default is 4.
+    theiler_t : int, optional
+        Theiler window (exclude neighbors within this time index). Default is 0.
+    prediction_horizon : int, optional
+        Steps ahead to predict. Default is 1.
+    metric : str, optional
+        Distance metric (e.g. ``"chebyshev"``, ``"euclidean"``). Default is ``"chebyshev"``.
+
+    Returns
+    -------
+    float
+        Mean squared prediction error.
+
+    Raises
+    ------
+    ValueError
+        If dim, tau, or prediction_horizon < 1, or series too short.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz.preprocessing import ragwitz_prediction_error
+    >>> rng = np.random.default_rng(7)
+    >>> x = np.cumsum(rng.normal(size=300))
+    >>> err = ragwitz_prediction_error(x, dim=2, tau=1, k_neighbors=4)
+    >>> err >= 0
+    True
     """
     if dim < 1:
         raise ValueError("dim must be >= 1")

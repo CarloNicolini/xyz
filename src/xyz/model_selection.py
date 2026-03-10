@@ -64,7 +64,72 @@ def _evaluate_source_candidate(estimator, sources: list[int], X, y=None):
 
 
 class RagwitzEmbeddingSearchCV(MetaEstimatorMixin, BaseEstimator):
-    """Search embedding settings using a Ragwitz-style prediction criterion."""
+    """Search embedding (dimension, tau) using the Ragwitz prediction-error criterion.
+
+    Evaluates (dim, tau) candidates via :func:`~xyz.preprocessing.ragwitz_prediction_error`
+    and selects the pair that minimizes mean prediction error across trials.
+    Optionally filters trials by autocorrelation decay time (ACT).
+
+    Parameters
+    ----------
+    estimator : object
+        TE estimator to tune (e.g. :class:`xyz.KSGTransferEntropy`).
+    target_index : int
+        Column index of the target variable.
+    dimensions : tuple of int, optional
+        Embedding dimensions to try. Default is (1, 2, 3).
+    taus : tuple of int, optional
+        Embedding delays (samples) to try. Default is (1, 2, 3).
+    k_neighbors : int, optional
+        k for local prediction in Ragwitz criterion. Default is 4.
+    theiler_t : int, optional
+        Theiler window. Default is 0.
+    prediction_horizon : int, optional
+        Steps ahead for prediction. Default is 1.
+    metric : str, optional
+        Distance metric. Default is ``"chebyshev"``.
+    act_threshold : int or None, optional
+        If set, keep only trials with ACT <= this. Default is None.
+    max_act_lag : int, optional
+        Max lag for ACT estimation. Default is 1000.
+    min_trials : int, optional
+        Minimum trials after ACT filtering. Default is 1.
+    refit : bool, optional
+        If True, fit best_estimator_ with best params. Default is True.
+    n_jobs : int or None, optional
+        Parallel jobs. Default is 1.
+
+    Attributes
+    ----------
+    best_params_ : dict
+        Best ``lags`` and ``tau``.
+    best_score_ : float
+        Best criterion score (negative prediction error).
+    best_estimator_ : estimator
+        Fitted estimator with best params (if refit=True).
+    cv_results_ : dict
+        ``params``, ``mean_test_score``, ``mean_prediction_error``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import KSGTransferEntropy, RagwitzEmbeddingSearchCV
+    >>> rng = np.random.default_rng(7)
+    >>> trials = []
+    >>> for _ in range(4):
+    ...     driver = rng.normal(size=250)
+    ...     target = np.zeros(250)
+    ...     for t in range(3, 250):
+    ...         target[t] = 0.55 * target[t-1] + 0.25 * target[t-3] + 0.2 * driver[t-1] + 0.1 * rng.normal()
+    ...     trials.append(np.column_stack([target, driver]))
+    >>> X = np.stack(trials)
+    >>> search = RagwitzEmbeddingSearchCV(
+    ...     KSGTransferEntropy(driver_indices=[1], target_indices=[0], k=3),
+    ...     target_index=0, dimensions=(1, 2, 3), taus=(1, 2),
+    ... ).fit(X)
+    >>> "lags" in search.best_params_ and "tau" in search.best_params_
+    True
+    """
 
     def __init__(
         self,
@@ -145,7 +210,38 @@ class RagwitzEmbeddingSearchCV(MetaEstimatorMixin, BaseEstimator):
 
 
 class InteractionDelaySearchCV(MetaEstimatorMixin, BaseEstimator):
-    """Search interaction delays for a TE estimator."""
+    """Search interaction delay for a TE estimator over a set of candidate delays.
+
+    Fits the estimator for each delay and selects the delay that maximizes the
+    TE score (or minimizes, depending on estimator). Optionally refits the
+    best estimator.
+
+    Parameters
+    ----------
+    estimator : object
+        TE estimator with a ``delay`` parameter.
+    delays : array-like
+        Candidate delay values (samples) to try.
+    refit : bool, optional
+        If True, fit best_estimator_ with best delay. Default is True.
+    tie_break : str, optional
+        ``"smallest"`` or ``"largest"`` when multiple delays tie. Default is ``"smallest"``.
+    n_jobs : int or None, optional
+        Parallel jobs. Default is 1.
+
+    Attributes
+    ----------
+    best_delay_ : int
+        Selected delay.
+    best_score_ : float
+        TE score at best delay.
+    best_estimator_ : estimator
+        Fitted estimator at best delay (if refit=True).
+    delay_curve_ : dict
+        Mapping delay -> score.
+    cv_results_ : dict
+        ``params``, ``mean_test_score``.
+    """
 
     def __init__(
         self,
@@ -203,7 +299,34 @@ class InteractionDelaySearchCV(MetaEstimatorMixin, BaseEstimator):
 
 
 class EnsembleTransferEntropy(MetaEstimatorMixin, BaseEstimator):
-    """Fit a TE estimator on multi-trial data without concatenation artifacts."""
+    """Wrapper that fits a TE estimator on multi-trial data.
+
+    Passes trial-shaped data to the underlying estimator so it can respect
+    trial boundaries (e.g. for KSG within-trial neighbor search).
+
+    Parameters
+    ----------
+    estimator : object
+        TE estimator with ``fit(X, y=None)`` and ``score()``.
+
+    Attributes
+    ----------
+    estimator_ : estimator
+        Fitted clone of the wrapped estimator.
+    score_ : float
+        TE score from the fitted estimator.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import EnsembleTransferEntropy, KSGTransferEntropy
+    >>> X = np.random.randn(3, 200, 2)  # 3 trials
+    >>> meta = EnsembleTransferEntropy(
+    ...     KSGTransferEntropy(driver_indices=[1], target_indices=[0], lags=1),
+    ... ).fit(X)
+    >>> np.isfinite(meta.score())
+    True
+    """
 
     def __init__(self, estimator):
         self.estimator = estimator
@@ -221,7 +344,36 @@ class EnsembleTransferEntropy(MetaEstimatorMixin, BaseEstimator):
 
 
 class GroupTEAnalysis(MetaEstimatorMixin, BaseEstimator):
-    """Group-level TE workflow with common embedding harmonization."""
+    """Group-level TE: Ragwitz search per subject, then common embedding and aggregate.
+
+    For each dataset in ``datasets``, runs :class:`RagwitzEmbeddingSearchCV` to find
+    best (lags, tau). Then takes the maximum dimension and tau across subjects,
+    refits each subject with that common embedding, and aggregates scores (mean or median).
+
+    Parameters
+    ----------
+    estimator : object
+        TE estimator to use (e.g. :class:`xyz.KSGTransferEntropy`).
+    target_index : int
+        Column index of the target.
+    dimensions : tuple of int, optional
+        Ragwitz dimension candidates. Default is (1, 2, 3).
+    taus : tuple of int, optional
+        Ragwitz tau candidates. Default is (1, 2, 3).
+    aggregation : str, optional
+        ``"mean"`` or ``"median"`` for group score. Default is ``"mean"``.
+
+    Attributes
+    ----------
+    common_params_ : dict
+        Common ``lags`` and ``tau`` used for all subjects.
+    subject_scores_ : np.ndarray
+        TE score per subject.
+    group_score_ : float
+        Aggregated (mean or median) group score.
+    embedding_searches_ : list
+        RagwitzEmbeddingSearchCV result per subject.
+    """
 
     def __init__(
         self,
@@ -279,7 +431,36 @@ class GroupTEAnalysis(MetaEstimatorMixin, BaseEstimator):
 
 
 class GreedySourceSelectionTransferEntropy(MetaEstimatorMixin, BaseEstimator):
-    """Greedy forward source selection for partial transfer entropy estimators."""
+    """Greedy forward selection of driver sources for partial TE.
+
+    Starts from the estimator's existing conditioning set and adds driver
+    sources one at a time from ``candidate_sources``, keeping the one that
+    increases the TE score most. Stops when no improvement or max_sources reached.
+
+    Parameters
+    ----------
+    estimator : object
+        Partial TE estimator with ``driver_indices`` and ``conditioning_indices``.
+    candidate_sources : array-like
+        Column indices of candidate driver sources.
+    max_sources : int or None, optional
+        Maximum number of sources to add. None = no limit. Default is None.
+    min_improvement : float, optional
+        Stop if improvement is <= this. Default is 0.0.
+    n_jobs : int or None, optional
+        Parallel jobs for evaluating candidate sets. Default is 1.
+    refit : bool, optional
+        If True, best_estimator_ is fitted with selected sources. Default is True.
+
+    Attributes
+    ----------
+    selected_sources_ : list of int
+        Indices of selected driver sources.
+    selection_history_ : list
+        History of (sources, score) along the greedy path.
+    best_estimator_ : estimator
+        Fitted estimator with selected sources (if refit=True).
+    """
 
     def __init__(
         self,

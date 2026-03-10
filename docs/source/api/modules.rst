@@ -9,10 +9,10 @@ Modules
    :undoc-members:
    :show-inheritance:
 
-``xyz._continuos``
+``xyz._continuous``
 ------------------
 
-.. automodule:: xyz._continuos
+.. automodule:: xyz._continuous
    :members:
    :undoc-members:
    :show-inheritance:

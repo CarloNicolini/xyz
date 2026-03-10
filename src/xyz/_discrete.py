@@ -9,7 +9,12 @@ from .preprocessing import build_te_observations
 
 
 class DiscreteInfoTheoryEstimator(InfoTheoryMixin, InfoTheoryEstimator, ABC):
-    """Base class for discrete estimators."""
+    """Base class for discrete (binned) information-theoretic estimators.
+
+    Subclasses operate on discretized time series and use histogram-based
+    entropy and conditional entropy to compute transfer entropy, partial
+    transfer entropy, or self-entropy.
+    """
 
 
 def _quantize_matlab(y: np.ndarray, c: int) -> np.ndarray:
@@ -81,7 +86,46 @@ def _conditional_entropy_binning(Y: np.ndarray, X: np.ndarray) -> float:
 
 
 class DiscreteTransferEntropy(DiscreteInfoTheoryEstimator):
-    """Discrete bivariate transfer entropy estimator."""
+    """Discrete (binned) bivariate transfer entropy.
+
+    Estimates :math:`TE_{X \\to Y} = H(Y_t | Y_{t-1:t-l}) - H(Y_t | Y_{t-1:t-l}, X_{t-d:t-d-l})`
+    using histogram-based entropy after binning into ``c`` bins.
+
+    Parameters
+    ----------
+    driver_indices : array-like
+        Column index(es) of the driver variable(s).
+    target_indices : array-like
+        Column index(es) of the target variable(s).
+    lags : int, optional
+        Number of past lags. Default is 1.
+    tau : int, optional
+        Lag step (samples). Default is 1.
+    delay : int, optional
+        Delay from driver to target. Default is 1.
+    c : int, optional
+        Number of bins for discretization. Default is 8.
+    quantize : bool, optional
+        If True, bin continuous data; if False, assume input is already discrete. Default is True.
+    extra_conditioning : str or None, optional
+        Optional extra conditioning (e.g. Faes method). Default is None.
+
+    Attributes
+    ----------
+    transfer_entropy_ : float
+        Fitted transfer entropy estimate (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import DiscreteTransferEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> X = np.column_stack([rng.rand(200), rng.rand(200)])  # (n_samples, 2): target, driver
+    >>> est = DiscreteTransferEntropy(driver_indices=[1], target_indices=[0], lags=1, c=6, quantize=True)
+    >>> est.fit(X)
+    >>> np.isfinite(est.transfer_entropy_)
+    True
+    """
 
     score_attr_ = "transfer_entropy_"
 
@@ -125,7 +169,52 @@ class DiscreteTransferEntropy(DiscreteInfoTheoryEstimator):
 
 
 class DiscretePartialTransferEntropy(DiscreteInfoTheoryEstimator):
-    """Discrete partial transfer entropy estimator."""
+    """Discrete partial transfer entropy (conditioning on side variables).
+
+    Estimates PTE from driver to target conditioned on ``conditioning_indices``
+    using binned entropy, i.e. the information transfer excluding that explained
+    by the conditioning variable(s).
+
+    Parameters
+    ----------
+    driver_indices : array-like
+        Column index(es) of the driver.
+    target_indices : array-like
+        Column index(es) of the target.
+    conditioning_indices : array-like
+        Column index(es) to condition on.
+    lags : int, optional
+        Number of past lags. Default is 1.
+    tau : int, optional
+        Lag step. Default is 1.
+    delay : int, optional
+        Delay from driver to target. Default is 1.
+    c : int, optional
+        Number of bins. Default is 8.
+    quantize : bool, optional
+        If True, bin continuous data. Default is True.
+    extra_conditioning : str or None, optional
+        Optional extra conditioning. Default is None.
+
+    Attributes
+    ----------
+    transfer_entropy_ : float
+        Fitted partial transfer entropy (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import DiscretePartialTransferEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> X = np.column_stack([rng.rand(200), rng.rand(200), rng.rand(200)])  # target, driver, conditioning
+    >>> est = DiscretePartialTransferEntropy(
+    ...     driver_indices=[1], target_indices=[0], conditioning_indices=[2],
+    ...     lags=1, c=6, quantize=True,
+    ... )
+    >>> est.fit(X)
+    >>> np.isfinite(est.transfer_entropy_)
+    True
+    """
 
     score_attr_ = "transfer_entropy_"
 
@@ -172,7 +261,40 @@ class DiscretePartialTransferEntropy(DiscreteInfoTheoryEstimator):
 
 
 class DiscreteSelfEntropy(DiscreteInfoTheoryEstimator):
-    """Discrete information storage estimator."""
+    """Discrete information storage (self-entropy).
+
+    Estimates :math:`S_Y = H(Y_t) - H(Y_t | Y_{t-1:t-l})`, the information
+    in the target's past about its present, using binned entropy.
+
+    Parameters
+    ----------
+    target_indices : array-like
+        Column index(es) of the target variable.
+    lags : int, optional
+        Number of past lags. Default is 1.
+    tau : int, optional
+        Lag step. Default is 1.
+    c : int, optional
+        Number of bins. Default is 8.
+    quantize : bool, optional
+        If True, bin continuous data. Default is True.
+
+    Attributes
+    ----------
+    self_entropy_ : float
+        Fitted self-entropy (after :meth:`fit`).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from xyz import DiscreteSelfEntropy
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.rand(200, 1)  # single series
+    >>> est = DiscreteSelfEntropy(target_indices=[0], lags=2, c=6, quantize=True)
+    >>> est.fit(X)
+    >>> np.isfinite(est.self_entropy_)
+    True
+    """
 
     score_attr_ = "self_entropy_"
 

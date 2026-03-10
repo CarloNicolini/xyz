@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from xyz._continuos import KSGTransferEntropy
+from xyz._continuous import KSGTransferEntropy
 
 def test_ksg_bte():
     r_csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'r.csv'))

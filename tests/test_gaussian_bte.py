@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from xyz._continuos import GaussianTransferEntropy
+from xyz._continuous import GaussianTransferEntropy
 
 def test_gaussian_bte(octave):
     r_csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'r.csv'))

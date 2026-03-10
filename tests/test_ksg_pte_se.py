@@ -1,6 +1,6 @@
 import numpy as np
 
-from xyz._continuos import KSGPartialTransferEntropy, KSGSelfEntropy
+from xyz._continuous import KSGPartialTransferEntropy, KSGSelfEntropy
 
 
 def test_ksg_pte():

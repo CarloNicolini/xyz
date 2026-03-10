@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from xyz._continuos import GaussianPartialTransferEntropy
+from xyz._continuous import GaussianPartialTransferEntropy
 
 def test_gaussian_pte(octave):
     r_csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'r.csv'))

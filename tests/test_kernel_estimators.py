@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from xyz._continuos import KernelTransferEntropy, KernelPartialTransferEntropy, KernelSelfEntropy
+from xyz._continuous import KernelTransferEntropy, KernelPartialTransferEntropy, KernelSelfEntropy
 
 def test_kernel_bte(octave):
     r_csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'r.csv'))

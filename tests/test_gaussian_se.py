@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from xyz._continuos import GaussianSelfEntropy
+from xyz._continuous import GaussianSelfEntropy
 
 def test_gaussian_se(octave):
     r_csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'r.csv'))
