@@ -24,6 +24,8 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx_copybutton",
 ]
+
+
 def _setup_plotly_stub(app):
     from docutils.parsers.rst import Directive
     from docutils import nodes
@@ -35,13 +37,18 @@ def _setup_plotly_stub(app):
         option_spec = {}
 
         def run(self):
-            return [nodes.paragraph(text="(Plotly figure — build with plotly_exec for full docs)")]
+            return [
+                nodes.paragraph(
+                    text="(Plotly figure — build with plotly_exec for full docs)"
+                )
+            ]
 
     app.add_directive("plotly-exec", PlotlyExecStub)
 
 
 try:
     import plotly_exec  # noqa: F401
+
     extensions.insert(0, "plotly_exec")
 except ImportError:
     setup = _setup_plotly_stub  # noqa: F811 — Sphinx calls conf.setup(); stub for .. plotly-exec::
@@ -72,4 +79,13 @@ html_theme_options = {
     "navigation_with_keys": True,
     "show_prev_next": False,
     "header_links_before_dropdown": 6,
+}
+
+# GitHub Pages settings
+html_baseurl = "https://carlonicolini.github.io/xyz"
+html_context = {
+    "github_user": "CarloNicolini",
+    "github_repo": "xyz",
+    "github_version": "main",
+    "doc_path": "docs/source",
 }
