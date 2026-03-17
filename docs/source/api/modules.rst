@@ -9,13 +9,6 @@ Modules
    :undoc-members:
    :show-inheritance:
 
-``xyz._continuous``
-------------------
-
-.. automodule:: xyz._continuous
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 ``xyz._discrete``
 -----------------

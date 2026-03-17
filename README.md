@@ -50,6 +50,8 @@ So TE is the reduction in uncertainty about *Y*<sub>ᵗ</sub> when we add *X*<su
 
 ## Installation
 
+**Supported platforms:** Linux and macOS. Windows is not supported at this time.
+
 From the project root (Python ≥3.12):
 
 ```bash
@@ -59,6 +61,25 @@ uv pip install -e .
 ```
 
 Dependencies: `numpy`, `scipy`, `scikit-learn`.
+
+### Running the test suite (pytest)
+
+The full test suite requires **Octave** and **mkoctfile** to be installed, and the ITS MEX files to be built. Many tests compare `xyz` outputs against the ITS Toolbox run under Octave; without Octave and the MEX files, those tests will fail.
+
+- **macOS** (Homebrew):
+  ```bash
+  brew install octave
+  ```
+  Then from the project root: `make mex` to build the MEX files, then `pytest tests/ -v`.
+
+- **Linux** (e.g. Ubuntu/Debian):
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends octave octave-dev
+  ```
+  Then from the project root: `make mex` and `pytest tests/ -v`.
+
+On other Linux distributions, install the Octave package and the development package that provides `mkoctfile` (often `octave-dev` or `liboctave-dev`).
 
 ---
 
